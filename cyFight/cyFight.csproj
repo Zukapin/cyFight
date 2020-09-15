@@ -1,8 +1,36 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net5.0</TargetFramework>
+    <Configurations>Debug;Release</Configurations>
+    <Platforms>x64</Platforms>
   </PropertyGroup>
+  
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <DefineConstants>DEBUG</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\cylib\cylib\cylib.csproj" />
+    <ProjectReference Include="..\..\bepuphysics2\BepuPhysics\BepuPhysics.csproj" />
+  </ItemGroup>
+  
+  <Target Name="ContentBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command="dotnet run --project $(ProjectDir)..\..\cylib\cyasset --input=@(CyContent) --output=$(OutputPath)cyFight.blob --cyfight" />
+  </Target>
+  
+  <ItemGroup>
+    <CyContent Include="Content\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="binds.cyb">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="config.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>
