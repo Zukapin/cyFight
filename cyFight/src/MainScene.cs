@@ -17,6 +17,8 @@ using BepuPhysics.Constraints;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Diagnostics;
+using System.Reflection.Metadata.Ecma335;
+using cyFight.Sim;
 
 namespace cyFight
 {
@@ -35,22 +37,35 @@ namespace cyFight
         public const string ENTER_FPV = "ENTER_FPV";
         public const string LEAVE_FPV = "LEAVE_FPV";
         public const string FIRE = "FIRE";
+        public const string JUMP = "JUMP";
+        public const string SPRINT = "SPRINT";
     }
 
     class TestPlayer
     {
+        Simulation Simulation;
         GameStage stage;
         Renderer renderer;
         EventManager em;
 
-        FPVCamera cam;
+        TPVCamera cam;
+        CharacterInput charInput;
+        Capsule_MRT charGraphics;
 
-        bool isForwardDown = false;
-        bool isBackDown = false;
-        bool isLeftDown = false;
-        bool isRightDown = false;
+        CharacterInput fakeChar;
+        Capsule_MRT fakeGraphics;
 
-        public TestPlayer(GameStage stage, Renderer renderer, EventManager em, FPVCamera cam)
+        BodyHandle hamHandle;
+        Cylinder_MRT hamGraphics;
+
+        ConstraintHandle bsHandle;
+        BallSocketServo bsDesc;
+        ConstraintHandle asHandle;
+        AngularServo asDesc;
+        ConstraintHandle dHandle;
+        DistanceServo dDesc;
+
+        public TestPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam)
         {
             this.stage = stage;
             this.renderer = renderer;
@@ -65,39 +80,122 @@ namespace cyFight
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.RIGHT, OnMoveRight);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ENTER_FPV, OnEnterFPV);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.LEAVE_FPV, OnLeaveFPV);
+            em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.SPRINT, OnSprint);
+            em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.JUMP, OnJump);
             em.addEventHandler((int)InterfacePriority.LOW, ActionTypes.FIRE, OnFire);
             em.addEventHandler((int)InterfacePriority.HIGHEST, onPointerEvent);
+        }
+
+        public void Init(CharacterControllers characters, Simulation Simulation)
+        {
+            this.Simulation = Simulation;
+
+            charInput = new CharacterInput(characters, new Vector3(0, 1, -20), new Capsule(0.5f, 1), 0.1f, 1f, 15f, 10f, 6f, 4f);
+            charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
+
+            fakeChar = new CharacterInput(characters, new Vector3(0, 1, -30), new Capsule(0.5f, 1), 0.1f, 1f, 15f, 10f, 6f, 4f);
+            fakeGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
+            fakeGraphics.color = Color.LightGoldenrodYellow;
+
+            hamHandle = Simulation.Bodies.Add(BodyDescription.CreateConvexDynamic(new Vector3(-2f, 0.25f, -20f), 0.25f, Simulation.Shapes, new Cylinder(0.25f, 0.5f)));
+            hamGraphics = new Cylinder_MRT(renderer, em, 0);
+            hamGraphics.color = Color.Blue;
+            hamGraphics.scale = new Vector3(0.25f, 0.75f, 0.25f);
+
+            bsDesc = new BallSocketServo
+            {
+                LocalOffsetA = Vector3.UnitX * 1.5f,
+                LocalOffsetB = Vector3.Zero,
+                ServoSettings = new ServoSettings(2f, 1f, 15f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            bsHandle = Simulation.Solver.Add(charInput.BodyHandle, hamHandle, bsDesc);
+
+            asDesc = new AngularServo
+            {
+                TargetRelativeRotationLocalA = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(Math.PI * 0.5f)),
+                ServoSettings = new ServoSettings(2f, 1f, 5f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            asHandle = Simulation.Solver.Add(charInput.BodyHandle, hamHandle, asDesc);
+
+            dDesc = new DistanceServo
+            {
+                LocalOffsetA = Vector3.UnitX * 0.25f,
+                LocalOffsetB = Vector3.Zero,
+                TargetDistance = 1.25f,
+                ServoSettings = new ServoSettings(2f, 1f, 20f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            dHandle = Simulation.Solver.Add(charInput.BodyHandle, hamHandle, dDesc);
+            /*
+                        Simulation.Solver.Add(charInput.BodyHandle, hamHandle,
+                            new LinearAxisServo
+                            {
+                                LocalOffsetA = Vector3.Zero,
+                                LocalOffsetB = Vector3.Zero,
+                                LocalPlaneNormal = Vector3.UnitY,
+                                TargetOffset = 2f,
+                                ServoSettings = new ServoSettings(1000f, 1f, 50f),
+                                SpringSettings = new SpringSettings(30, 1)
+                            });*/
+            /*
+                        Simulation.Solver.Add(charInput.BodyHandle, hamHandle,
+                            new DistanceServo
+                            {
+                                LocalOffsetA = Vector3.Zero,
+                                LocalOffsetB = Vector3.Zero,
+                                TargetDistance = 2f,
+                                ServoSettings = new ServoSettings(1000f, 1f, 50f),
+                                SpringSettings = new SpringSettings(30, 1)
+                            });*/
         }
 
         bool onPointerEvent(PointerEventArgs args)
         {
             if (args.type == PointerEventType.AIM)
             {
-                cam.yaw -= args.aimDeltaX;
-                cam.pitch -= args.aimDeltaY;
+                cam.Yaw -= args.aimDeltaX;
+                cam.Pitch -= args.aimDeltaY;
                 return true;
             }
             return false;
         }
 
+        bool OnSprint(ActionEventArgs args)
+        {
+            charInput.Sprint = args.buttonDown;
+            return true;
+        }
+
+        bool OnJump(ActionEventArgs args)
+        {
+            if (args.buttonDown)
+                charInput.TryJump = true;
+            return true;
+        }
+
         bool OnMoveForward(ActionEventArgs args)
         {
-            isForwardDown = args.buttonDown;
+            charInput.MoveForward = args.buttonDown;
             return true;
         }
         bool OnMoveBackward(ActionEventArgs args)
         {
-            isBackDown = args.buttonDown;
+            charInput.MoveBackward = args.buttonDown;
             return true;
         }
         bool OnMoveLeft(ActionEventArgs args)
         {
-            isLeftDown = args.buttonDown;
+            charInput.MoveLeft = args.buttonDown;
             return true;
         }
         bool OnMoveRight(ActionEventArgs args)
         {
-            isRightDown = args.buttonDown;
+            charInput.MoveRight = args.buttonDown;
             return true;
         }
 
@@ -117,6 +215,11 @@ namespace cyFight
 
         bool OnFire(ActionEventArgs args)
         {
+            if (args.buttonDown && !fire)
+            {
+                fire = true;
+                fireDt = 0;
+            }
             return true;
         }
 
@@ -126,29 +229,96 @@ namespace cyFight
             return true;
         }
 
+        bool fire = false;
+        float fireDt = 0;
+
         void onUpdate(float dt)
         {
-            float speed = 20;
+            charInput.UpdateCharacterGoals(cam.getForwardVec(), dt);
+            charInput.UpdateCameraPosition(cam);
 
-            Vector3 vel = new Vector3();
-            Vector3 forward = cam.getForwardVec();
-            Vector3 right = cam.getRightVec();
-            if (isLeftDown)
-                vel += -right;
-            if (isRightDown)
-                vel += right;
-            if (isForwardDown)
-                vel += forward;
-            if (isBackDown)
-                vel += -forward;
+            charGraphics.position = cam.AnchorPos;
 
-            cam.pos = cam.pos + vel * dt * speed;
+            fakeGraphics.position = new BodyReference(fakeChar.BodyHandle, Simulation.Bodies).Pose.Position;
+
+            var hamRef = new BodyReference(hamHandle, Simulation.Bodies);
+            var p = hamRef.Pose;
+
+            hamGraphics.position = p.Position;
+            hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(p.Orientation);
+
+            if (fire)
+            {
+                if (foundHit)
+                {
+                    var hitRef = new BodyReference(hamHit, Simulation.Bodies);
+                    var offset = hitRef.Pose.Position - p.Position;
+                    var offLen = offset.Length();
+                    var hamVel = hamRef.Velocity;
+                    var velLen = hamVel.Linear.Length();
+
+                    hitRef.ApplyImpulse(offset / offLen * velLen * 5, -offset);
+
+                    bsDesc.ServoSettings = new ServoSettings(2f, 1f, 15f);
+                    bsDesc.LocalOffsetA = Vector3.UnitX * 1.5f;
+                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
+                    foundHit = false;
+                    fire = false;
+                }
+                else
+                {
+                    float fireSpeed = 6;
+                    var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, fireDt * fireSpeed);
+                    QuaternionEx.Transform(Vector3.UnitX * 2f, rot, out bsDesc.LocalOffsetA);
+                    bsDesc.ServoSettings = new ServoSettings(10, 5, 10);
+                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
+                    fireDt += dt;
+                }
+            }
+        }
+
+        bool foundHit = false;
+        BodyHandle hamHit;
+
+        void Explode(BodyHandle notHammer)
+        {
+            foundHit = true;
+            hamHit = notHammer;
+        }
+
+        public void Contacts<TManifold>(CollidablePair pair, ref TManifold manifold) where TManifold : struct, IContactManifold<TManifold>
+        {
+            if (!fire)
+                return;
+
+            if (pair.B.Mobility != CollidableMobility.Dynamic)
+                return;
+
+            if (pair.A.BodyHandle != hamHandle && pair.B.BodyHandle != hamHandle)
+                return;
+
+            for (int i = 0; i < manifold.Count; ++i)
+            {
+                if (manifold.GetDepth(ref manifold, i) >= -1e-3f)
+                {
+                    //An actual collision was found. 
+                    if (pair.A.BodyHandle == hamHandle)
+                    {
+                        Explode(pair.B.BodyHandle);
+                    }
+                    else
+                    {
+                        Explode(pair.A.BodyHandle);
+                    }
+                    break;
+                }
+            }
         }
     }
 
     class TestScene : IScene
     {
-        FPVCamera cam;
+        TPVCamera cam;
 
         GameStage stage;
         Renderer renderer;
@@ -158,7 +328,7 @@ namespace cyFight
             this.stage = stage;
             this.renderer = stage.renderer;
 
-            cam = new FPVCamera(stage.renderer.ResolutionWidth / (float)stage.renderer.ResolutionHeight, Vector3.UnitY, 0, 0);
+            cam = new TPVCamera(stage.renderer.ResolutionWidth / (float)stage.renderer.ResolutionHeight, Vector3.Zero, Vector3.One, 0, 0);
         }
 
         public float LoadTime()
@@ -212,37 +382,6 @@ namespace cyFight
 
         public void Load(EventManager em)
         {
-            var player = new TestPlayer(stage, renderer, em, cam);
-
-            Shader s_posTex = renderer.Assets.GetShader(Renderer.DefaultAssets.SH_POS_TEX);
-            Texture t_duck = renderer.Assets.GetTexture(Assets.TEX_DUCK);
-            VertexBuffer vb_quad = renderer.Assets.GetVertexBuffer(Renderer.DefaultAssets.VB_QUAD_POS_TEX_UNIT);
-
-            //mip ducks
-            var testQuad = new TexturedQuad_2D(renderer, em, 0, t_duck);
-            testQuad.position = new Vector2(10, 10);
-            testQuad.scale = new Vector2(testQuad.tex.width, testQuad.tex.height);
-
-            testQuad = new TexturedQuad_2D(renderer, em, 0, t_duck);
-            testQuad.position = new Vector2(276, 10);
-            testQuad.scale = new Vector2(testQuad.tex.width / 2f, testQuad.tex.height / 2f);
-
-            testQuad = new TexturedQuad_2D(renderer, em, 0, t_duck);
-            testQuad.position = new Vector2(414, 10);
-            testQuad.scale = new Vector2(testQuad.tex.width / 4f, testQuad.tex.height / 4f);
-
-            testQuad = new TexturedQuad_2D(renderer, em, 0, t_duck);
-            testQuad.position = new Vector2(488, 10);
-            testQuad.scale = new Vector2(testQuad.tex.width / 8f, testQuad.tex.height / 8f);
-
-            //ground duck
-            var a = new TexturedCircle_MRT(renderer, em, 0, t_duck);
-            a.position = new Vector3(0, 0, 0);
-            a.scale = new Vector2(20f, 20f);
-            a.face = new Vector3(0, 1, 0);
-            a.face = a.face / a.face.Length();
-
-            //default duck
             var b = new Box_MRT(renderer, em, 0);
             b.position = new Vector3(0, 1f, -3);
 
@@ -261,7 +400,20 @@ namespace cyFight
             //l = new DirectionalLight(renderer, em, Vector3.UnitY, Color.White, 0.1f);
 
             BufferPool = new BufferPool();
-            Simulation = Simulation.Create(BufferPool, new DemoNarrowPhaseCallbacks(), new DemoPoseIntegratorCallbacks(new Vector3(0, -10, 0)), new PositionFirstTimestepper());
+            //Simulation = Simulation.Create(BufferPool, new DemoNarrowPhaseCallbacks(), new DemoPoseIntegratorCallbacks(new Vector3(0, -10, 0)), new PositionFirstTimestepper());
+
+            CharacterControllers characters;
+            characters = new CharacterControllers(BufferPool);
+            //The PositionFirstTimestepper is the simplest timestepping mode, but since it integrates velocity into position at the start of the frame, directly modified velocities outside of the timestep
+            //will be integrated before collision detection or the solver has a chance to intervene. That's fine in this demo. Other built-in options include the PositionLastTimestepper and the SubsteppingTimestepper.
+            //Note that the timestepper also has callbacks that you can use for executing logic between processing stages, like BeforeCollisionDetection.
+            var player = new TestPlayer(stage, renderer, em, cam);
+            var simCallback = new CharacterNarrowphaseCallbacks(characters, player);
+            Simulation = Simulation.Create(BufferPool, simCallback, new DemoPoseIntegratorCallbacks(new Vector3(0, -10, 0)), new PositionLastTimestepper());
+
+            player.Init(characters, Simulation);
+
+            simCallback.player = player;
 
             var targetThreadCount = Math.Max(1, Environment.ProcessorCount > 4 ? Environment.ProcessorCount - 2 : Environment.ProcessorCount - 1);
             ThreadDispatcher = new SimpleThreadDispatcher(targetThreadCount);
@@ -269,15 +421,29 @@ namespace cyFight
             var boxShape = new Box(1, 1, 1);
             boxShape.ComputeInertia(1, out var boxInertia);
             var boxIndex = Simulation.Shapes.Add(boxShape);
-            const int pyramidCount = 40;
+
+            var capShape = new Capsule(1f, 1f);
+            capShape.ComputeInertia(1f, out var capInertia);
+            var capIndex = Simulation.Shapes.Add(capShape);
+
+            var sphShape = new Sphere(1f);
+            sphShape.ComputeInertia(1f, out var sphInertia);
+            var sphIndex = Simulation.Shapes.Add(sphShape);
+
+            var cylShape = new Cylinder(1f, 1f);
+            cylShape.ComputeInertia(1f, out var cylInertia);
+            var cylIndex = Simulation.Shapes.Add(cylShape);
+
+            const int pyramidCount = 4;
             for (int pyramidIndex = 0; pyramidIndex < pyramidCount; ++pyramidIndex)
             {
-                const int rowCount = 20;
+                const int rowCount = 30;
                 for (int rowIndex = 0; rowIndex < rowCount; ++rowIndex)
                 {
                     int columnCount = rowCount - rowIndex;
                     for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                     {
+                        /*
                         var h = Simulation.Bodies.Add(BodyDescription.CreateDynamic(new Vector3(
                             (-columnCount * 0.5f + columnIndex) * boxShape.Width,
                             (rowIndex + 0.5f) * boxShape.Height,
@@ -285,6 +451,37 @@ namespace cyFight
                             boxInertia,
                             new CollidableDescription(boxIndex, 0.1f),
                             new BodyActivityDescription(0.01f)));
+                        */
+
+                        /*
+                        var h = Simulation.Bodies.Add(BodyDescription.CreateDynamic(new Vector3(
+                            (-columnCount * 0.5f + columnIndex) * boxShape.Width,
+                            (rowIndex + 0.5f) * boxShape.Height,
+                            (pyramidIndex - pyramidCount * 0.5f) * (boxShape.Length + 4)),
+                            capInertia,
+                            new CollidableDescription(capIndex, 0.1f),
+                            new BodyActivityDescription(0.01f)));
+                        */
+
+                        /*
+                        var h = Simulation.Bodies.Add(BodyDescription.CreateDynamic(new Vector3(
+                            (-columnCount * 0.5f + columnIndex) * boxShape.Width,
+                            (rowIndex + 0.5f) * boxShape.Height,
+                            (pyramidIndex - pyramidCount * 0.5f) * (boxShape.Length + 4)),
+                            sphInertia,
+                            new CollidableDescription(sphIndex, 0.1f),
+                            new BodyActivityDescription(0.01f)));
+                        */
+
+                        var h = Simulation.Bodies.Add(BodyDescription.CreateDynamic(new Vector3(
+                            (-columnCount * 0.5f + columnIndex) * boxShape.Width,
+                            (rowIndex + 0.5f) * boxShape.Height,
+                            (pyramidIndex - pyramidCount * 0.5f) * (boxShape.Length + 4)),
+                            cylInertia,
+                            new CollidableDescription(cylIndex, 0.1f),
+                            new BodyActivityDescription(0.01f)));
+
+                        
 
                         new MagicBox(Simulation, renderer, em, h);
                     }
@@ -296,7 +493,6 @@ namespace cyFight
             g.position = new Vector3(0, -0.5f, 0);
             g.scale = new Vector3(2500, 1, 2500);
             g.color = Color.White;
-
 
             var bulletShape = new Sphere(5.5f);
             //Note that the use of radius^3 for mass can produce some pretty serious mass ratios. 
@@ -310,18 +506,20 @@ namespace cyFight
             //the best solution is to cheat as much as possible to avoid the corner cases.
             var bodyDescription = BodyDescription.CreateConvexDynamic(
                 new Vector3(0, 8, -180), new BodyVelocity(new Vector3(0, 0, 200)), bulletShape.Radius * bulletShape.Radius * bulletShape.Radius, Simulation.Shapes, bulletShape);
-            Simulation.Bodies.Add(bodyDescription);
+            //Simulation.Bodies.Add(bodyDescription);
+
         }
 
         class MagicBox
         {
             BodyReference bodyRef;
-            Box_MRT box;
+            Cylinder_MRT box;
 
             public MagicBox(Simulation simulation, Renderer renderer, EventManager em, BodyHandle handle)
             {
-                box = new Box_MRT(renderer, em, 0);
+                box = new Cylinder_MRT(renderer, em, 0);
                 box.color = Color.DarkRed;
+                box.scale = new Vector3(1f, 1f, 1f);
                 em.addUpdateListener(0, Update);
 
                 bodyRef = simulation.Bodies.GetBodyReference(handle);
