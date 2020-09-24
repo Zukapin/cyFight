@@ -4,11 +4,20 @@ using System.Numerics;
 using System;
 using System.Diagnostics;
 using BepuUtilities;
+using BepuPhysics.Constraints;
 
 using cylib;
 
-namespace cyFight.Sim
+namespace cySim
 {
+    public struct PlayerInput
+    {
+        public Vector3 MoveDirection;
+        public bool MoveForward, MoveBackward, MoveLeft, MoveRight;
+        public bool TryJump;
+        public bool Sprint;
+    }
+
     /// <summary>
     /// Convenience structure that wraps a CharacterController reference and its associated body.
     /// </summary>
@@ -18,18 +27,25 @@ namespace cyFight.Sim
     /// It's just a fairly convenient interface for demos usage.</para>
     /// <para>Note that all characters are dynamic and respond to constraints and forces in the simulation.</para>
     /// </remarks>
-    public struct CharacterInput
+    public class CharacterInput
     {
         BodyHandle bodyHandle;
         CharacterControllers characters;
         float speed;
         Capsule shape;
 
-        public bool MoveForward, MoveBackward, MoveLeft, MoveRight;
-        public bool TryJump;
-        public bool Sprint;
-
         public BodyHandle BodyHandle { get { return bodyHandle; } }
+        public BodyHandle HammerHandle { get { return hamHandle; } }
+
+        public PlayerInput input;
+
+        BodyHandle hamHandle;
+        ConstraintHandle bsHandle;
+        BallSocketServo bsDesc;
+        ConstraintHandle asHandle;
+        AngularServo asDesc;
+        ConstraintHandle dHandle;
+        DistanceServo dDesc;
 
         public CharacterInput(CharacterControllers characters, Vector3 initialPosition, Capsule shape,
             float speculativeMargin, float mass, float maximumHorizontalForce, float maximumVerticalGlueForce,
@@ -52,31 +68,58 @@ namespace cyFight.Sim
             this.speed = speed;
             this.shape = shape;
 
-            MoveForward = false;
-            MoveBackward = false;
-            MoveLeft = false;
-            MoveRight = false;
-            TryJump = false;
-            Sprint = false;
+            input = new PlayerInput();
+
+            hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateConvexDynamic(new Vector3(-2f, 0.25f, -20f), 0.25f, characters.Simulation.Shapes, new Cylinder(0.25f, 0.5f)));
+
+            bsDesc = new BallSocketServo
+            {
+                LocalOffsetA = Vector3.UnitX * 1.5f,
+                LocalOffsetB = Vector3.Zero,
+                ServoSettings = new ServoSettings(2f, 1f, 15f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            bsHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, bsDesc);
+
+            asDesc = new AngularServo
+            {
+                TargetRelativeRotationLocalA = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(Math.PI * 0.5f)),
+                ServoSettings = new ServoSettings(2f, 1f, 5f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            asHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, asDesc);
+
+            dDesc = new DistanceServo
+            {
+                LocalOffsetA = Vector3.UnitX * 0.25f,
+                LocalOffsetB = Vector3.Zero,
+                TargetDistance = 1.25f,
+                ServoSettings = new ServoSettings(2f, 1f, 20f),
+                SpringSettings = new SpringSettings(30, 1)
+            };
+
+            dHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, dDesc);
         }
 
 
-        public void UpdateCharacterGoals(Vector3 camForward, float simulationTimestepDuration)
+        public void UpdateCharacterGoals(float dt)
         {
             Vector2 movementDirection = default;
-            if (MoveForward)
+            if (input.MoveForward)
             {
                 movementDirection = new Vector2(0, 1);
             }
-            if (MoveBackward)
+            if (input.MoveBackward)
             {
                 movementDirection += new Vector2(0, -1);
             }
-            if (MoveLeft)
+            if (input.MoveLeft)
             {
                 movementDirection += new Vector2(-1, 0);
             }
-            if (MoveRight)
+            if (input.MoveRight)
             {
                 movementDirection += new Vector2(1, 0);
             }
@@ -87,12 +130,11 @@ namespace cyFight.Sim
             }
 
             ref var character = ref characters.GetCharacterByBodyHandle(bodyHandle);
-            character.TryJump = TryJump;
-            TryJump = false;
+            character.TryJump = input.TryJump;
             var characterBody = new BodyReference(bodyHandle, characters.Simulation.Bodies);
-            var effectiveSpeed = Sprint ? speed * 1.75f : speed;
+            var effectiveSpeed = input.Sprint ? speed * 1.75f : speed;
             var newTargetVelocity = movementDirection * effectiveSpeed;
-            var viewDirection = camForward;
+            var viewDirection = input.MoveDirection;
             //Modifying the character's raw data does not automatically wake the character up, so we do so explicitly if necessary.
             //If you don't explicitly wake the character up, it won't respond to the changed motion goals.
             //(You can also specify a negative deactivation threshold in the BodyActivityDescription to prevent the character from sleeping at all.)
@@ -102,6 +144,7 @@ namespace cyFight.Sim
                 (newTargetVelocity != Vector2.Zero && character.ViewDirection != viewDirection)))
             {
                 characters.Simulation.Awakener.AwakenBody(character.BodyHandle);
+                characters.Simulation.Awakener.AwakenBody(hamHandle);
             }
             character.TargetVelocity = newTargetVelocity;
             character.ViewDirection = viewDirection;
@@ -127,7 +170,7 @@ namespace cyFight.Sim
                     //We'll arbitrarily set air control to be a fraction of supported movement's speed/force.
                     const float airControlForceScale = .2f;
                     const float airControlSpeedScale = .2f;
-                    var airAccelerationDt = characterBody.LocalInertia.InverseMass * character.MaximumHorizontalForce * airControlForceScale * simulationTimestepDuration;
+                    var airAccelerationDt = characterBody.LocalInertia.InverseMass * character.MaximumHorizontalForce * airControlForceScale * dt;
                     var maximumAirSpeed = effectiveSpeed * airControlSpeedScale;
                     var targetVelocity = MathF.Min(currentVelocity + airAccelerationDt, maximumAirSpeed);
                     //While we shouldn't allow the character to continue accelerating in the air indefinitely, trying to move in a given direction should never slow us down in that direction.
@@ -136,25 +179,44 @@ namespace cyFight.Sim
                     Debug.Assert(characterBody.Awake, "Velocity changes don't automatically update objects; the character should have already been woken up before applying air control.");
                 }
             }
-        }
 
-        public void UpdateCameraPosition(TPVCamera camera, float cameraBackwardOffsetScale = 4)
-        {
-            //We'll override the demo harness's camera control by attaching the camera to the character controller body.
-            ref var character = ref characters.GetCharacterByBodyHandle(bodyHandle);
-            var characterBody = new BodyReference(bodyHandle, characters.Simulation.Bodies);
-            //Use a simple sorta-neck model so that when the camera looks down, the center of the screen sees past the character.
-            //Makes mouselocked ray picking easier.
-            camera.AnchorPos = characterBody.Pose.Position;
-            camera.Offset = new Vector3(0, shape.Radius * 1.2f, (shape.HalfLength + shape.Radius) * cameraBackwardOffsetScale);
 
-            var goalOrientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, camera.Yaw);
-            var curOrientation = characterBody.Pose.Orientation;
-            characterBody.Pose.Orientation = goalOrientation;
-                
-                //new Vector3(0, shape.HalfLength, 0) +
-                //camera.getUpVec() * (shape.Radius * 1.2f) -
-                //camera.getForwardVec() * (shape.HalfLength + shape.Radius) * cameraBackwardOffsetScale;
+            if (fire)
+            {
+                if (foundHit)
+                {
+                    var hitRef = new BodyReference(hamHit, Simulation.Bodies);
+                    var offset = hitRef.Pose.Position - p.Position;
+                    var offLen = offset.Length();
+                    var hamVel = hamRef.Velocity;
+                    var velLen = hamVel.Linear.Length();
+
+                    hitRef.ApplyImpulse(offset / offLen * velLen * 5, -offset);
+
+                    bsDesc.ServoSettings = new ServoSettings(2f, 1f, 15f);
+                    bsDesc.LocalOffsetA = Vector3.UnitX * 1.5f;
+                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
+                    foundHit = false;
+                    fire = false;
+                }
+                else
+                {
+                    float fireSpeed = 6;
+                    var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, fireDt * fireSpeed);
+                    QuaternionEx.Transform(Vector3.UnitX * 2f, rot, out bsDesc.LocalOffsetA);
+                    bsDesc.ServoSettings = new ServoSettings(10, 5, 10);
+                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
+                    fireDt += dt;
+
+                    if (fireDt > 0.4f)
+                    {
+                        bsDesc.ServoSettings = new ServoSettings(2f, 1f, 15f);
+                        bsDesc.LocalOffsetA = Vector3.UnitX * 1.5f;
+                        Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
+                        fire = false;
+                    }
+                }
+            }
         }
 
 

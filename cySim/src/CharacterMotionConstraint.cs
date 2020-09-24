@@ -7,7 +7,7 @@ using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
 using static BepuUtilities.GatherScatter;
 
-namespace cyFight.Sim
+namespace cySim
 {
     public struct CharacterMotionAccumulatedImpulse
     {

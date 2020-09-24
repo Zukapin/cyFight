@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\cylib\cylib\cylib.csproj" />
     <ProjectReference Include="..\..\bepuphysics2\BepuPhysics\BepuPhysics.csproj" />
+    <ProjectReference Include="..\cySim\cySim.csproj" />
   </ItemGroup>
   
   <Target Name="ContentBuild" BeforeTargets="PreBuildEvent">

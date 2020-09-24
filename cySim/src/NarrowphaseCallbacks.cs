@@ -4,20 +4,18 @@ using BepuPhysics.CollisionDetection;
 using System.Runtime.CompilerServices;
 using BepuPhysics.Constraints;
 
-namespace cyFight.Sim
+namespace cySim
 {
     /// <summary>
     /// Implements simple callbacks to inform the CharacterControllers system of created contacts.
     /// </summary>
-    struct CharacterNarrowphaseCallbacks : INarrowPhaseCallbacks
+    public struct CyNarrowphaseCallbacks : INarrowPhaseCallbacks
     {
         public CharacterControllers Characters;
-        public TestPlayer player;
 
-        public CharacterNarrowphaseCallbacks(CharacterControllers characters, TestPlayer player)
+        public CyNarrowphaseCallbacks(CharacterControllers characters)
         {
             Characters = characters;
-            this.player = player;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -37,7 +35,6 @@ namespace cyFight.Sim
         {
             pairMaterial = new PairMaterialProperties { FrictionCoefficient = 1, MaximumRecoveryVelocity = 2, SpringSettings = new SpringSettings(30, 1) };
             Characters.TryReportContacts(pair, ref manifold, workerIndex, ref pairMaterial);
-            player.Contacts(pair, ref manifold);
             return true;
         }
 

@@ -1,0 +1,1 @@
+﻿cySim is the game logic part of cyFight, spun off into a library so it can be used by the server and client

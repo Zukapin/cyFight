@@ -10,7 +10,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace cyFight.Sim
+namespace cySim
 {
     /// <summary>
     /// Raw data for a dynamic character controller instance.
@@ -79,6 +79,12 @@ namespace cyFight.Sim
         public ConstraintHandle MotionConstraintHandle;
     }
 
+    public struct HammerAttachment
+    {
+        public BodyHandle BodyHandle;
+        public BodyHandle CharacterHandle;
+    }
+
     /// <summary>
     /// System that manages all the characters in a simulation. Responsible for updating movement constraints based on character goals and contact states.
     /// </summary>
@@ -93,6 +99,9 @@ namespace cyFight.Sim
         Buffer<int> bodyHandleToCharacterIndex;
         QuickList<CharacterController> characters;
 
+        Buffer<int> bodyHandleToAttachmentIndex;
+        QuickList<HammerAttachment> hammers;
+
         /// <summary>
         /// Gets the number of characters being controlled.
         /// </summary>
@@ -104,11 +113,14 @@ namespace cyFight.Sim
         /// <param name="pool">Pool to allocate resources from.</param>
         /// <param name="initialCharacterCapacity">Number of characters to initially allocate space for.</param>
         /// <param name="initialBodyHandleCapacity">Number of body handles to initially allocate space for in the body handle->character mapping.</param>
-        public CharacterControllers(BufferPool pool, int initialCharacterCapacity = 4096, int initialBodyHandleCapacity = 4096)
+        public CharacterControllers(BufferPool pool, int initialCharacterCapacity = 4096, int initialBodyHandleCapacity = 4096, int initialAttachmentCapacity = 1024)
         {
             this.pool = pool;
+
             characters = new QuickList<CharacterController>(initialCharacterCapacity, pool);
+            hammers = new QuickList<HammerAttachment>(initialAttachmentCapacity, pool);
             ResizeBodyHandleCapacity(initialBodyHandleCapacity);
+
             analyzeContactsWorker = AnalyzeContactsWorker;
             expandBoundingBoxesWorker = ExpandBoundingBoxesWorker;
         }
@@ -133,6 +145,13 @@ namespace cyFight.Sim
             if (bodyHandleToCharacterIndex.Length > oldCapacity)
             {
                 Unsafe.InitBlockUnaligned(ref Unsafe.As<int, byte>(ref bodyHandleToCharacterIndex[oldCapacity]), 0xFF, (uint)((bodyHandleToCharacterIndex.Length - oldCapacity) * sizeof(int)));
+            }
+
+            oldCapacity = bodyHandleToAttachmentIndex.Length;
+            pool.ResizeToAtLeast(ref bodyHandleToAttachmentIndex, bodyHandleCapacity, bodyHandleToAttachmentIndex.Length);
+            if (bodyHandleToAttachmentIndex.Length > oldCapacity)
+            {
+                Unsafe.InitBlockUnaligned(ref Unsafe.As<int, byte>(ref bodyHandleToAttachmentIndex[oldCapacity]), 0xFF, (uint)((bodyHandleToAttachmentIndex.Length - oldCapacity) * sizeof(int)));
             }
         }
 
@@ -189,6 +208,23 @@ namespace cyFight.Sim
             bodyHandleToCharacterIndex[bodyHandle.Value] = characterIndex;
             return ref character;
         }
+        
+        public ref HammerAttachment AllocateHammer(BodyHandle bodyHandle)
+        {
+            Debug.Assert(bodyHandle.Value >= 0 && (bodyHandle.Value >= bodyHandleToAttachmentIndex.Length || bodyHandleToAttachmentIndex[bodyHandle.Value] == -1),
+                "Cannot allocate more than one attachment for the same body handle.");
+
+            if (bodyHandle.Value >= bodyHandleToAttachmentIndex.Length)
+                ResizeBodyHandleCapacity(Math.Max(bodyHandle.Value + 1, bodyHandleToAttachmentIndex.Length * 2));
+
+            var hammerIndex = hammers.Count;
+            ref var hammer = ref hammers.Allocate(pool);
+            hammer = default;
+            hammer.BodyHandle = bodyHandle;
+
+            bodyHandleToAttachmentIndex[bodyHandle.Value] = hammerIndex;
+            return ref hammer;
+        }
 
         /// <summary>
         /// Removes a character from the character controllers set by the character's index.
@@ -220,6 +256,28 @@ namespace cyFight.Sim
             RemoveCharacterByIndex(bodyHandleToCharacterIndex[bodyHandle.Value]);
         }
 
+        public void RemoveHammerByIndex(int hammerIndex)
+        {
+            Debug.Assert(hammerIndex >= 0 && hammerIndex < hammers.Count, "Hammer index must exist in the set of hammers.");
+            ref var hammer = ref hammers[hammerIndex];
+            Debug.Assert(hammer.BodyHandle.Value >= 0 && hammer.BodyHandle.Value < bodyHandleToAttachmentIndex.Length && bodyHandleToAttachmentIndex[hammer.BodyHandle.Value] == hammerIndex,
+                "Hammer must exist in the set of hammers.");
+            bodyHandleToAttachmentIndex[hammer.BodyHandle.Value] = -1;
+            hammers.FastRemoveAt(hammerIndex);
+            //If the removal moved a character, update the body handle mapping.
+            if (hammers.Count > hammerIndex)
+            {
+                bodyHandleToAttachmentIndex[hammers[hammerIndex].BodyHandle.Value] = hammerIndex;
+            }
+        }
+
+        public void RemoveHammerByBodyHandle(BodyHandle bodyHandle)
+        {
+            Debug.Assert(bodyHandle.Value >= 0 && bodyHandle.Value < bodyHandleToAttachmentIndex.Length && bodyHandleToAttachmentIndex[bodyHandle.Value] >= 0,
+                "Removing a hammer by body handle requires that a hammer associated with the given body handle actually exists.");
+            RemoveHammerByIndex(bodyHandleToAttachmentIndex[bodyHandle.Value]);
+        }
+
         struct SupportCandidate
         {
             public Vector3 OffsetFromCharacter;
@@ -229,11 +287,21 @@ namespace cyFight.Sim
             public CollidableReference Support;
         }
 
+        struct HammerHitCandidate
+        {
+            public Vector3 OffsetFromHammer;
+            public float Depth;
+            public Vector3 OffsetFromTarget;
+            public Vector3 Normal;
+            public CollidableReference Target;
+        }
+
         struct ContactCollectionWorkerCache
         {
             public Buffer<SupportCandidate> SupportCandidates;
+            public Buffer<HammerHitCandidate> HammerCandidates;
 
-            public unsafe ContactCollectionWorkerCache(int maximumCharacterCount, BufferPool pool)
+            public unsafe ContactCollectionWorkerCache(int maximumCharacterCount, int maximumHammerCount, BufferPool pool)
             {
                 pool.Take(maximumCharacterCount, out SupportCandidates);
                 for (int i = 0; i < maximumCharacterCount; ++i)
@@ -241,11 +309,18 @@ namespace cyFight.Sim
                     //Initialize the depths to a value that guarantees replacement.
                     SupportCandidates[i].Depth = float.MinValue;
                 }
+
+                pool.Take(maximumHammerCount, out HammerCandidates);
+                for (int i = 0; i < maximumHammerCount; ++i)
+                {
+                    HammerCandidates[i].Depth = float.MinValue;
+                }
             }
 
             public void Dispose(BufferPool pool)
             {
                 pool.Return(ref SupportCandidates);
+                pool.Return(ref HammerCandidates);
             }
         }
 
@@ -255,7 +330,80 @@ namespace cyFight.Sim
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         bool TryReportContacts<TManifold>(CollidableReference characterCollidable, CollidableReference supportCollidable, CollidablePair pair, ref TManifold manifold, int workerIndex) where TManifold : struct, IContactManifold<TManifold>
         {
-            if (characterCollidable.Mobility == CollidableMobility.Dynamic && characterCollidable.BodyHandle.Value < bodyHandleToCharacterIndex.Length)
+            //My code -- check for my stuff
+            //this method was designed to return true if characterCollidable is actually a character, to set the friction with character-collided things
+            if (characterCollidable.Mobility != CollidableMobility.Dynamic)
+                return false; //Hammer or Character must be dynamic, and some things will null-ref if we try to access info for non-dynamic things
+
+            if (characterCollidable.BodyHandle.Value < bodyHandleToAttachmentIndex.Length)
+            {
+                var hammerBodyHandle = characterCollidable.BodyHandle;
+                var hammerIndex = bodyHandleToAttachmentIndex[hammerBodyHandle.Value];
+                if (hammerIndex >= 0)
+                {
+                    //actually a hammer here
+                    ref var hammer = ref hammers[hammerIndex];
+
+                    ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[hammer.BodyHandle.Value];
+                    ref var set = ref Simulation.Bodies.Sets[bodyLocation.SetIndex];
+                    ref var pose = ref set.Poses[bodyLocation.Index];
+
+                    ref var targetCandidate = ref contactCollectionWorkerCaches[workerIndex].HammerCandidates[hammerIndex];
+
+                    //find the deepest contact
+                    float maxDepth = manifold.GetDepth(ref manifold, 0);
+                    int maxDepthIndex = 0;
+                    for (int i = 1; i < manifold.Count; ++i)
+                    {
+                        var cDepth = manifold.GetDepth(ref manifold, i);
+                        if (cDepth > maxDepth)
+                        {
+                            maxDepth = cDepth;
+                            maxDepthIndex = i;
+                        }
+                    }
+
+                    //if this is the largest depth for this hammer (in this thread), use this contact instead of previous
+                    if (targetCandidate.Depth < maxDepth)
+                    {
+                        Vector3 offsetB;
+                        if (manifold.Convex)
+                        {//getting the offset to 'B' is oof, but this branch should compile out. not sure about the cast
+                            ref var convexManifold = ref Unsafe.As<TManifold, ConvexContactManifold>(ref manifold);
+                            offsetB = convexManifold.OffsetB;
+                        }
+                        else
+                        {
+                            ref var nonconvexManifold = ref Unsafe.As<TManifold, NonconvexContactManifold>(ref manifold);
+                            offsetB = nonconvexManifold.OffsetB;
+                        }
+
+                        targetCandidate.Depth = maxDepth;
+                        targetCandidate.Target = supportCollidable;
+                        targetCandidate.Normal = manifold.GetNormal(ref manifold, maxDepthIndex);
+                        var offset = manifold.GetOffset(ref manifold, maxDepthIndex);
+                        var offsetFromB = offset - offsetB;
+
+                        if (pair.B.Packed == characterCollidable.Packed)
+                        {//we run this method with hammer/target possibly swapped from the manifold, so need to swap some things here
+                            targetCandidate.Normal = -targetCandidate.Normal;
+                            targetCandidate.OffsetFromHammer = offsetFromB;
+                            targetCandidate.OffsetFromTarget = offset;
+                        }
+                        else
+                        {
+                            targetCandidate.OffsetFromHammer = offset;
+                            targetCandidate.OffsetFromTarget = offsetFromB;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            //Original bepu code -- check if characterCollidable is actually a character and do stuff
+            //Modified a bit to match earlier conditionals and renamed some args
+            if (characterCollidable.BodyHandle.Value < bodyHandleToCharacterIndex.Length)
             {
                 var characterBodyHandle = characterCollidable.BodyHandle;
                 var characterIndex = bodyHandleToCharacterIndex[characterBodyHandle.Value];
@@ -461,7 +609,7 @@ namespace cyFight.Sim
             pool.Take(threadCount, out contactCollectionWorkerCaches);
             for (int i = 0; i < contactCollectionWorkerCaches.Length; ++i)
             {
-                contactCollectionWorkerCaches[i] = new ContactCollectionWorkerCache(characters.Count, pool);
+                contactCollectionWorkerCaches[i] = new ContactCollectionWorkerCache(characters.Count, hammers.Count, pool);
             }
             //While the character will retain support with contacts with depths above the MinimumSupportContinuationDepth if there was support in the previous frame,
             //it's possible for the contacts to be lost because the bounding box isn't expanded by MinimumSupportContinuationDepth and the broad phase doesn't see the support collidable.
