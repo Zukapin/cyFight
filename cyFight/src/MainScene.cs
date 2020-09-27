@@ -54,10 +54,7 @@ namespace cyFight
 
         Cylinder_MRT hamGraphics;
 
-        PlayerInput input;
-
-        bool fire = false;
-        float fireDt = 0;
+        ref PlayerInput input { get { return ref sim.Players[charIndex].Input; } }
 
         public TestPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam, CySim sim)
         {
@@ -153,10 +150,9 @@ namespace cyFight
 
         bool OnFire(ActionEventArgs args)
         {
-            if (args.buttonDown && !fire)
+            if (args.buttonDown)
             {
-                fire = true;
-                fireDt = 0;
+                input.TryFire = true;
             }
             return true;
         }
@@ -173,56 +169,18 @@ namespace cyFight
             var c = sim.Players[charIndex];
 
             input.MoveDirection = cam.getForwardVec();
-            c.input = input;
 
             var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
             var cPos = characterBody.Pose.Position;
             cam.AnchorPos = cPos;
             charGraphics.position = cPos;
+            charGraphics.rotation = Matrix3x3.CreateFromQuaternion(characterBody.Pose.Orientation);
 
             var hammerBody = new BodyReference(c.HammerHandle, sim.Simulation.Bodies);
             var hPose = hammerBody.Pose;
 
             hamGraphics.position = hPose.Position;
             hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(hPose.Orientation);
-        }
-
-        bool foundHit = false;
-        BodyHandle hamHit;
-
-        void Explode(BodyHandle notHammer)
-        {
-            foundHit = true;
-            hamHit = notHammer;
-        }
-
-        public void Contacts<TManifold>(CollidablePair pair, ref TManifold manifold) where TManifold : struct, IContactManifold<TManifold>
-        {
-            if (!fire)
-                return;
-
-            if (pair.B.Mobility != CollidableMobility.Dynamic)
-                return;
-
-            if (pair.A.BodyHandle != hamHandle && pair.B.BodyHandle != hamHandle)
-                return;
-
-            for (int i = 0; i < manifold.Count; ++i)
-            {
-                if (manifold.GetDepth(ref manifold, i) >= -1e-3f)
-                {
-                    //An actual collision was found. 
-                    if (pair.A.BodyHandle == hamHandle)
-                    {
-                        Explode(pair.B.BodyHandle);
-                    }
-                    else
-                    {
-                        Explode(pair.A.BodyHandle);
-                    }
-                    break;
-                }
-            }
         }
     }
 
@@ -297,24 +255,26 @@ namespace cyFight
 
         public void Load(EventManager em)
         {
-            sim.Load();
+            sim.Load(out var BodyHandles);
 
-            foreach (var h in sim.BodyHandles)
+            foreach (var h in BodyHandles)
             {
                 new MagicBox(sim.Simulation, renderer, em, h);
             }
 
-            var playerHandle = sim.AddPlayer();
 
             //add lights
             Vector3 lightDir = Vector3.Normalize(new Vector3(0.25f, -1, -0.5f));
             var l = new DirectionalLight(renderer, em, lightDir, Color.White, 1);
             //l = new DirectionalLight(renderer, em, Vector3.UnitY, Color.White, 0.1f);
 
+            var player = new TestPlayer(stage, renderer, em, cam, sim);
+            player.Init();
         }
 
         public void Update(float dt)
         {
+            sim.Update(dt);
         }
 
         public ICamera GetCamera()

@@ -16,6 +16,7 @@ namespace cySim
         public bool MoveForward, MoveBackward, MoveLeft, MoveRight;
         public bool TryJump;
         public bool Sprint;
+        public bool TryFire;
     }
 
     /// <summary>
@@ -29,7 +30,47 @@ namespace cySim
     /// </remarks>
     public class CharacterInput
     {
+        static BallSocketServo Constraints_POS_IDLE = new BallSocketServo
+        {
+            LocalOffsetA = Vector3.UnitX * 1.5f,
+            LocalOffsetB = Vector3.Zero,
+            ServoSettings = new ServoSettings(2f, 1f, 15f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
+        static BallSocketServo Constraints_POS_SMASH = new BallSocketServo
+        {
+            LocalOffsetA = Vector3.UnitX * 1.5f, //this gets set by game logic
+            LocalOffsetB = Vector3.Zero,
+            ServoSettings = new ServoSettings(10f, 2f, 30f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
+        static AngularServo Constraints_ANGULAR = new AngularServo
+        {
+            TargetRelativeRotationLocalA = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(Math.PI * 0.5f)),
+            ServoSettings = new ServoSettings(2f, 1f, 5f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
+        static DistanceServo Constraints_DISTANCE = new DistanceServo
+        {
+            LocalOffsetA = Vector3.UnitX * 0.25f,
+            LocalOffsetB = Vector3.Zero,
+            TargetDistance = 1.25f,
+            ServoSettings = new ServoSettings(2f, 1f, 20f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
+        static OneBodyAngularServo Constraints_CHAR_ANGULAR = new OneBodyAngularServo
+        {
+            TargetOrientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 1f),
+            ServoSettings = new ServoSettings(5, 5, 20f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
         BodyHandle bodyHandle;
+        ConstraintHandle bodyAngularHandle;
         CharacterControllers characters;
         float speed;
         Capsule shape;
@@ -37,15 +78,14 @@ namespace cySim
         public BodyHandle BodyHandle { get { return bodyHandle; } }
         public BodyHandle HammerHandle { get { return hamHandle; } }
 
-        public PlayerInput input;
+        public ref PlayerInput Input { get { return ref input; } }
+
+        PlayerInput input;
 
         BodyHandle hamHandle;
         ConstraintHandle bsHandle;
-        BallSocketServo bsDesc;
         ConstraintHandle asHandle;
-        AngularServo asDesc;
         ConstraintHandle dHandle;
-        DistanceServo dDesc;
 
         public CharacterInput(CharacterControllers characters, Vector3 initialPosition, Capsule shape,
             float speculativeMargin, float mass, float maximumHorizontalForce, float maximumVerticalGlueForce,
@@ -56,7 +96,7 @@ namespace cySim
 
             //Because characters are dynamic, they require a defined BodyInertia. For the purposes of the demos, we don't want them to rotate or fall over, so the inverse inertia tensor is left at its default value of all zeroes.
             //This is effectively equivalent to giving it an infinite inertia tensor- in other words, no torque will cause it to rotate.
-            bodyHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(initialPosition, new BodyInertia { InverseMass = 1f / mass }, new CollidableDescription(shapeIndex, speculativeMargin), new BodyActivityDescription(shape.Radius * 0.02f)));
+            bodyHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(initialPosition, new BodyInertia { InverseMass = 1f / mass, InverseInertiaTensor = new Symmetric3x3 { XX = 1, YY = 1, ZZ = 1 } }, new CollidableDescription(shapeIndex, speculativeMargin), new BodyActivityDescription(shape.Radius * 0.02f)));
             ref var character = ref characters.AllocateCharacter(bodyHandle);
             character.LocalUp = new Vector3(0, 1, 0);
             character.CosMaximumSlope = MathF.Cos(maximumSlope);
@@ -68,39 +108,19 @@ namespace cySim
             this.speed = speed;
             this.shape = shape;
 
+            bodyAngularHandle = characters.Simulation.Solver.Add(bodyHandle, Constraints_CHAR_ANGULAR);
+
             input = new PlayerInput();
 
-            hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateConvexDynamic(new Vector3(-2f, 0.25f, -20f), 0.25f, characters.Simulation.Shapes, new Cylinder(0.25f, 0.5f)));
+            hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateConvexDynamic(initialPosition + Constraints_POS_IDLE.LocalOffsetA, 0.25f, characters.Simulation.Shapes, new Cylinder(0.25f, 0.5f)));
 
-            bsDesc = new BallSocketServo
-            {
-                LocalOffsetA = Vector3.UnitX * 1.5f,
-                LocalOffsetB = Vector3.Zero,
-                ServoSettings = new ServoSettings(2f, 1f, 15f),
-                SpringSettings = new SpringSettings(30, 1)
-            };
+            bsHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, Constraints_POS_IDLE);
+            asHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, Constraints_ANGULAR);
+            dHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, Constraints_DISTANCE);
 
-            bsHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, bsDesc);
-
-            asDesc = new AngularServo
-            {
-                TargetRelativeRotationLocalA = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(Math.PI * 0.5f)),
-                ServoSettings = new ServoSettings(2f, 1f, 5f),
-                SpringSettings = new SpringSettings(30, 1)
-            };
-
-            asHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, asDesc);
-
-            dDesc = new DistanceServo
-            {
-                LocalOffsetA = Vector3.UnitX * 0.25f,
-                LocalOffsetB = Vector3.Zero,
-                TargetDistance = 1.25f,
-                ServoSettings = new ServoSettings(2f, 1f, 20f),
-                SpringSettings = new SpringSettings(30, 1)
-            };
-
-            dHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, dDesc);
+            ref var hammer = ref characters.AllocateHammer(hamHandle, bodyHandle);
+            hammer.HammerState = HammerState.IDLE;
+            hammer.SmashValue = 2;
         }
 
 
@@ -131,6 +151,7 @@ namespace cySim
 
             ref var character = ref characters.GetCharacterByBodyHandle(bodyHandle);
             character.TryJump = input.TryJump;
+            input.TryJump = false;
             var characterBody = new BodyReference(bodyHandle, characters.Simulation.Bodies);
             var effectiveSpeed = input.Sprint ? speed * 1.75f : speed;
             var newTargetVelocity = movementDirection * effectiveSpeed;
@@ -180,7 +201,35 @@ namespace cySim
                 }
             }
 
+            ref var hammer = ref characters.GetHammerByBodyHandle(hamHandle);
+            if (input.TryFire)
+            {
+                input.TryFire = false;
 
+                if (hammer.HammerState == HammerState.IDLE)
+                {
+                    hammer.HammerState = HammerState.SMASH;
+                    hammer.HammerDT = 0;
+                }
+            }
+
+            if (hammer.HammerState == HammerState.RECOIL)
+            {
+                hammer.HammerState = HammerState.IDLE;
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_IDLE);
+            }
+            else if (hammer.HammerState == HammerState.SMASH)
+            {
+                hammer.HammerDT += dt;
+
+                float fireSpeed = 6;
+                var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, hammer.HammerDT * fireSpeed);
+                QuaternionEx.Transform(Constraints_POS_IDLE.LocalOffsetA, rot, out Constraints_POS_SMASH.LocalOffsetA);
+
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_SMASH);
+            }
+
+            /*
             if (fire)
             {
                 if (foundHit)
@@ -217,6 +266,7 @@ namespace cySim
                     }
                 }
             }
+            */
         }
 
 

@@ -79,10 +79,20 @@ namespace cySim
         public ConstraintHandle MotionConstraintHandle;
     }
 
+    public enum HammerState
+    {
+        IDLE,
+        SMASH,
+        RECOIL
+    }
+
     public struct HammerAttachment
     {
         public BodyHandle BodyHandle;
         public BodyHandle CharacterHandle;
+        public HammerState HammerState;
+        public float HammerDT;
+        public float SmashValue;
     }
 
     /// <summary>
@@ -121,6 +131,7 @@ namespace cySim
             hammers = new QuickList<HammerAttachment>(initialAttachmentCapacity, pool);
             ResizeBodyHandleCapacity(initialBodyHandleCapacity);
 
+            analyzeHammerWorker = AnalyzeHammerWorker;
             analyzeContactsWorker = AnalyzeContactsWorker;
             expandBoundingBoxesWorker = ExpandBoundingBoxesWorker;
         }
@@ -190,6 +201,19 @@ namespace cySim
             return ref characters[bodyHandleToCharacterIndex[bodyHandle.Value]];
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ref HammerAttachment GetHammerByIndex(int index)
+        {
+            return ref hammers[index];
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ref HammerAttachment GetHammerByBodyHandle(BodyHandle bodyHandle)
+        {
+            Debug.Assert(bodyHandle.Value >= 0 && bodyHandle.Value < bodyHandleToAttachmentIndex.Length && bodyHandleToAttachmentIndex[bodyHandle.Value] >= 0, "Can only look up indices for body handles associated with hammers in this CharacterControllers instance.");
+            return ref hammers[bodyHandleToAttachmentIndex[bodyHandle.Value]];
+        }
+
         /// <summary>
         /// Allocates a character.
         /// </summary>
@@ -209,7 +233,7 @@ namespace cySim
             return ref character;
         }
         
-        public ref HammerAttachment AllocateHammer(BodyHandle bodyHandle)
+        public ref HammerAttachment AllocateHammer(BodyHandle bodyHandle, BodyHandle characterHandle)
         {
             Debug.Assert(bodyHandle.Value >= 0 && (bodyHandle.Value >= bodyHandleToAttachmentIndex.Length || bodyHandleToAttachmentIndex[bodyHandle.Value] == -1),
                 "Cannot allocate more than one attachment for the same body handle.");
@@ -221,6 +245,7 @@ namespace cySim
             ref var hammer = ref hammers.Allocate(pool);
             hammer = default;
             hammer.BodyHandle = bodyHandle;
+            hammer.CharacterHandle = characterHandle;
 
             bodyHandleToAttachmentIndex[bodyHandle.Value] = hammerIndex;
             return ref hammer;
@@ -344,61 +369,64 @@ namespace cySim
                     //actually a hammer here
                     ref var hammer = ref hammers[hammerIndex];
 
-                    ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[hammer.BodyHandle.Value];
-                    ref var set = ref Simulation.Bodies.Sets[bodyLocation.SetIndex];
-                    ref var pose = ref set.Poses[bodyLocation.Index];
-
-                    ref var targetCandidate = ref contactCollectionWorkerCaches[workerIndex].HammerCandidates[hammerIndex];
-
-                    //find the deepest contact
-                    float maxDepth = manifold.GetDepth(ref manifold, 0);
-                    int maxDepthIndex = 0;
-                    for (int i = 1; i < manifold.Count; ++i)
+                    if (hammer.HammerState == HammerState.SMASH)
                     {
-                        var cDepth = manifold.GetDepth(ref manifold, i);
-                        if (cDepth > maxDepth)
+                        ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[hammer.BodyHandle.Value];
+                        ref var set = ref Simulation.Bodies.Sets[bodyLocation.SetIndex];
+                        ref var pose = ref set.Poses[bodyLocation.Index];
+
+                        ref var targetCandidate = ref contactCollectionWorkerCaches[workerIndex].HammerCandidates[hammerIndex];
+
+                        //find the deepest contact
+                        float maxDepth = manifold.GetDepth(ref manifold, 0);
+                        int maxDepthIndex = 0;
+                        for (int i = 1; i < manifold.Count; ++i)
                         {
-                            maxDepth = cDepth;
-                            maxDepthIndex = i;
+                            var cDepth = manifold.GetDepth(ref manifold, i);
+                            if (cDepth > maxDepth)
+                            {
+                                maxDepth = cDepth;
+                                maxDepthIndex = i;
+                            }
+                        }
+
+                        //if this is the largest depth for this hammer (in this thread), use this contact instead of previous
+                        if (targetCandidate.Depth < maxDepth)
+                        {
+                            Vector3 offsetB;
+                            if (manifold.Convex)
+                            {//getting the offset to 'B' is oof, but this branch should compile out. not sure about the cast
+                                ref var convexManifold = ref Unsafe.As<TManifold, ConvexContactManifold>(ref manifold);
+                                offsetB = convexManifold.OffsetB;
+                            }
+                            else
+                            {
+                                ref var nonconvexManifold = ref Unsafe.As<TManifold, NonconvexContactManifold>(ref manifold);
+                                offsetB = nonconvexManifold.OffsetB;
+                            }
+
+                            targetCandidate.Depth = maxDepth;
+                            targetCandidate.Target = supportCollidable;
+                            targetCandidate.Normal = manifold.GetNormal(ref manifold, maxDepthIndex);
+                            var offset = manifold.GetOffset(ref manifold, maxDepthIndex);
+                            var offsetFromB = offset - offsetB;
+
+                            if (pair.B.Packed == characterCollidable.Packed)
+                            {//we run this method with hammer/target possibly swapped from the manifold, so need to swap some things here
+                                targetCandidate.Normal = -targetCandidate.Normal;
+                                targetCandidate.OffsetFromHammer = offsetFromB;
+                                targetCandidate.OffsetFromTarget = offset;
+                            }
+                            else
+                            {
+                                targetCandidate.OffsetFromHammer = offset;
+                                targetCandidate.OffsetFromTarget = offsetFromB;
+                            }
                         }
                     }
 
-                    //if this is the largest depth for this hammer (in this thread), use this contact instead of previous
-                    if (targetCandidate.Depth < maxDepth)
-                    {
-                        Vector3 offsetB;
-                        if (manifold.Convex)
-                        {//getting the offset to 'B' is oof, but this branch should compile out. not sure about the cast
-                            ref var convexManifold = ref Unsafe.As<TManifold, ConvexContactManifold>(ref manifold);
-                            offsetB = convexManifold.OffsetB;
-                        }
-                        else
-                        {
-                            ref var nonconvexManifold = ref Unsafe.As<TManifold, NonconvexContactManifold>(ref manifold);
-                            offsetB = nonconvexManifold.OffsetB;
-                        }
-
-                        targetCandidate.Depth = maxDepth;
-                        targetCandidate.Target = supportCollidable;
-                        targetCandidate.Normal = manifold.GetNormal(ref manifold, maxDepthIndex);
-                        var offset = manifold.GetOffset(ref manifold, maxDepthIndex);
-                        var offsetFromB = offset - offsetB;
-
-                        if (pair.B.Packed == characterCollidable.Packed)
-                        {//we run this method with hammer/target possibly swapped from the manifold, so need to swap some things here
-                            targetCandidate.Normal = -targetCandidate.Normal;
-                            targetCandidate.OffsetFromHammer = offsetFromB;
-                            targetCandidate.OffsetFromTarget = offset;
-                        }
-                        else
-                        {
-                            targetCandidate.OffsetFromHammer = offset;
-                            targetCandidate.OffsetFromTarget = offsetFromB;
-                        }
-                    }
+                    return false;
                 }
-
-                return false;
             }
 
             //Original bepu code -- check if characterCollidable is actually a character and do stuff
@@ -873,6 +901,83 @@ namespace cySim
                 character.TryJump = false;
             }
         }
+        struct PendingHammerSmash
+        {
+            public int HammerIndex;
+            public int HammerBodyIndex;
+            public int TargetIndex;
+            public Vector3 Impulse;
+            public Vector3 ImpulseOffset;
+        }
+
+        struct AnalyzeHammerWorkerCache
+        {
+            //The solver does not permit multithreaded removals and additions. We handle all of them in a sequential postpass.
+            public QuickList<PendingHammerSmash> HammerTargetsToSmash;
+
+            public AnalyzeHammerWorkerCache(int maximumHammerCount, BufferPool pool)
+            {
+                HammerTargetsToSmash = new QuickList<PendingHammerSmash>(maximumHammerCount, pool);
+            }
+
+            public void Dispose(BufferPool pool)
+            {
+                HammerTargetsToSmash.Dispose(pool);
+            }
+        }
+
+        Buffer<AnalyzeHammerWorkerCache> analyzeHammerWorkerCaches;
+
+        void AnalyzeContactsForHammerRegion(int start, int exclusiveEnd, int workerIndex)
+        {
+            ref var workerCache = ref analyzeHammerWorkerCaches[workerIndex];
+
+            for (int hammerIndex = start; hammerIndex < exclusiveEnd; ++hammerIndex)
+            {
+                ref var hammer = ref hammers[hammerIndex];
+                ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[hammer.BodyHandle.Value];
+                //this is run once per hammer, but we're still multithreaded
+                //cache any work we should do back in single-thread land inside the workerCache
+                //we do this using allocateUsafely on one of the workerCache's lists -- main-thread will actually call the changes to the simulation
+
+                if (bodyLocation.SetIndex == 0)
+                {//only do stuff if the hammer is 'active'
+                    //we read through the contactCollectionWorkers for this hammer to find the deepest contact
+                    var targetCandidate = contactCollectionWorkerCaches[0].HammerCandidates[hammerIndex];
+                    for (int j = 1; j < contactCollectionWorkerCaches.Length; ++j)
+                    {
+                        ref var workerCandidate = ref contactCollectionWorkerCaches[j].HammerCandidates[hammerIndex];
+                        if (workerCandidate.Depth > targetCandidate.Depth)
+                        {
+                            targetCandidate = workerCandidate;
+                        }
+                    }
+
+                    if (targetCandidate.Depth > float.MinValue)
+                    {
+                        ref var target = ref workerCache.HammerTargetsToSmash.AllocateUnsafely();
+                        ref var targetBodyLocation = ref Simulation.Bodies.HandleToLocation[targetCandidate.Target.BodyHandle.Value];
+
+                        var targetVel = Simulation.Bodies.ActiveSet.Velocities[targetBodyLocation.Index];
+                        var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
+
+                        var wxr = Vector3.Cross(targetVel.Angular, targetCandidate.OffsetFromTarget);
+                        var targetContactVelocity = targetVel.Linear + wxr;
+
+                        wxr = Vector3.Cross(hammerVel.Angular, targetCandidate.OffsetFromHammer);
+                        var hammerContactVelocity = hammerVel.Linear + wxr;
+
+                        var impulseSpeed = (hammerContactVelocity - targetContactVelocity).Length() * hammer.SmashValue;
+
+                        target.HammerIndex = hammerIndex;
+                        target.HammerBodyIndex = bodyLocation.Index;
+                        target.TargetIndex = targetBodyLocation.Index;
+                        target.Impulse = -targetCandidate.Normal * impulseSpeed;
+                        target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                    }
+                }
+            }
+        }
 
         struct AnalyzeContactsJob
         {
@@ -884,6 +989,7 @@ namespace cySim
         int analysisJobCount;
         Buffer<AnalyzeContactsJob> jobs;
         Action<int> analyzeContactsWorker;
+        Action<int> analyzeHammerWorker;
         void AnalyzeContactsWorker(int workerIndex)
         {
             int jobIndex;
@@ -894,6 +1000,15 @@ namespace cySim
             }
         }
 
+        void AnalyzeHammerWorker(int workerIndex)
+        {
+            int jobIndex;
+            while ((jobIndex = Interlocked.Increment(ref analysisJobIndex)) < analysisJobCount)
+            {
+                ref var job = ref jobs[jobIndex];
+                AnalyzeContactsForHammerRegion(job.Start, job.ExclusiveEnd, workerIndex);
+            }
+        }
 
         /// <summary>
         /// Updates all character support states and motion constraints based on the current character goals and all the contacts collected since the last call to AnalyzeContacts. 
@@ -909,6 +1024,10 @@ namespace cySim
                 pool.Take(1, out analyzeContactsWorkerCaches);
                 analyzeContactsWorkerCaches[0] = new AnalyzeContactsWorkerCache(characters.Count, pool);
                 AnalyzeContactsForCharacterRegion(0, characters.Count, 0);
+
+                pool.Take(1, out analyzeHammerWorkerCaches);
+                analyzeHammerWorkerCaches[0] = new AnalyzeHammerWorkerCache(hammers.Count, pool);
+                AnalyzeContactsForHammerRegion(0, hammers.Count, 0);
             }
             else
             {
@@ -935,6 +1054,30 @@ namespace cySim
                     threadDispatcher.DispatchWorkers(analyzeContactsWorker);
                     pool.Return(ref jobs);
                 }
+
+                analysisJobCount = Math.Min(hammers.Count, threadDispatcher.ThreadCount * 4);
+                if (analysisJobCount > 0)
+                {
+                    pool.Take(threadDispatcher.ThreadCount, out analyzeHammerWorkerCaches);
+                    pool.Take(analysisJobCount, out jobs);
+                    for (int i = 0; i < threadDispatcher.ThreadCount; ++i)
+                    {
+                        analyzeHammerWorkerCaches[i] = new AnalyzeHammerWorkerCache(hammers.Count, pool);
+                    }
+                    var baseCount = hammers.Count / analysisJobCount;
+                    var remainder = characters.Count - baseCount * analysisJobCount;
+                    var previousEnd = 0;
+                    for (int i = 0; i < analysisJobCount; ++i)
+                    {
+                        ref var job = ref jobs[i];
+                        job.Start = previousEnd;
+                        job.ExclusiveEnd = job.Start + (i < remainder ? baseCount + 1 : baseCount);
+                        previousEnd = job.ExclusiveEnd;
+                    }
+                    analysisJobIndex = -1;
+                    threadDispatcher.DispatchWorkers(analyzeHammerWorker);
+                    pool.Return(ref jobs);
+                }
             }
             //We're done with all the contact collection worker caches.
             for (int i = 0; i < contactCollectionWorkerCaches.Length; ++i)
@@ -942,6 +1085,24 @@ namespace cySim
                 contactCollectionWorkerCaches[i].Dispose(pool);
             }
             pool.Return(ref contactCollectionWorkerCaches);
+
+            if (analyzeHammerWorkerCaches.Allocated)
+            {
+                for (int threadIndex = 0; threadIndex < analyzeHammerWorkerCaches.Length; ++threadIndex)
+                {
+                    ref var cache = ref analyzeHammerWorkerCaches[threadIndex];
+
+                    for (int i = 0; i < cache.HammerTargetsToSmash.Count; ++i)
+                    {
+                        var smash = cache.HammerTargetsToSmash[i];
+                        BodyReference.ApplyImpulse(Simulation.Bodies.ActiveSet, smash.TargetIndex, smash.Impulse, smash.ImpulseOffset);
+
+                        ref var hammer = ref hammers[smash.HammerIndex];
+                        hammer.HammerState = HammerState.RECOIL;
+                    }
+                }
+                pool.Return(ref analyzeHammerWorkerCaches);
+            }
 
             if (analyzeContactsWorkerCaches.Allocated)
             {
