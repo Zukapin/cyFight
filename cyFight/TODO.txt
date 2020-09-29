@@ -1,0 +1,15 @@
+﻿Character Controller Updates -
+	Standing Constraints-
+		Create an angular hinge servo constraint
+		Attach the angular hinge to character and a stubbed-out kinematic body -- this keeps the character upright with a limited force
+		Monitor character orientation, if it differs too much from 'standing' can say character is fallen over and stop constraints
+
+	Turning Constraints-
+		AngularAxisMotor with the support, or a stubbed-out kinematic body with a smaller motor force
+		Update the motor constraint every frame to adjust target velocity based on player movement (camera?)
+			Player controls work based on 'cam forward', but the character should try to face movement direction?
+				Would make turning less twitchy as it doesn't depending directly on camera position, but 'holding W' while moving camera is largely the same
+			Or character faces camera direction? Should you be able to look behind you while still running 'forward'?
+			Update the movement constraints to be unequal based on character facing? Move faster in character-forward? So 'turning' is kinda slow?
+			Probably have character-forward match cam-forward -- so that character attachments go the expected direction? cam-forward?
+			Try both?

@@ -83,7 +83,7 @@ namespace cySim
     {
         IDLE,
         SMASH,
-        RECOIL
+        RECOIL,
     }
 
     public struct HammerAttachment
@@ -111,6 +111,8 @@ namespace cySim
 
         Buffer<int> bodyHandleToAttachmentIndex;
         QuickList<HammerAttachment> hammers;
+
+        public BodyHandle FakeKinematic { get; private set; }
 
         /// <summary>
         /// Gets the number of characters being controlled.
@@ -147,6 +149,8 @@ namespace cySim
             simulation.Solver.Register<StaticCharacterMotionConstraint>();
             simulation.Timestepper.BeforeCollisionDetection += PrepareForContacts;
             simulation.Timestepper.CollisionsDetected += AnalyzeContacts;
+
+            FakeKinematic = simulation.Bodies.Add(BodyDescription.CreateConvexKinematic(new Vector3(0, 1000, 0), simulation.Shapes, new Sphere(1f)));
         }
 
         private void ResizeBodyHandleCapacity(int bodyHandleCapacity)
@@ -956,24 +960,46 @@ namespace cySim
                     if (targetCandidate.Depth > float.MinValue)
                     {
                         ref var target = ref workerCache.HammerTargetsToSmash.AllocateUnsafely();
-                        ref var targetBodyLocation = ref Simulation.Bodies.HandleToLocation[targetCandidate.Target.BodyHandle.Value];
+                        if (targetCandidate.Target.Mobility == CollidableMobility.Dynamic || targetCandidate.Target.Mobility == CollidableMobility.Kinematic)
+                        {//kinematics can still have velocities -- so we can figure out the blowback impulse fine, even if the target impulse doesn't do much
+                            ref var targetBodyLocation = ref Simulation.Bodies.HandleToLocation[targetCandidate.Target.BodyHandle.Value];
 
-                        var targetVel = Simulation.Bodies.ActiveSet.Velocities[targetBodyLocation.Index];
-                        var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
+                            var targetVel = Simulation.Bodies.ActiveSet.Velocities[targetBodyLocation.Index];
+                            var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
 
-                        var wxr = Vector3.Cross(targetVel.Angular, targetCandidate.OffsetFromTarget);
-                        var targetContactVelocity = targetVel.Linear + wxr;
+                            var wxr = Vector3.Cross(targetVel.Angular, targetCandidate.OffsetFromTarget);
+                            var targetContactVelocity = targetVel.Linear + wxr;
 
-                        wxr = Vector3.Cross(hammerVel.Angular, targetCandidate.OffsetFromHammer);
-                        var hammerContactVelocity = hammerVel.Linear + wxr;
+                            wxr = Vector3.Cross(hammerVel.Angular, targetCandidate.OffsetFromHammer);
+                            var hammerContactVelocity = hammerVel.Linear + wxr;
 
-                        var impulseSpeed = (hammerContactVelocity - targetContactVelocity).Length() * hammer.SmashValue;
+                            var impulseSpeed = (hammerContactVelocity - targetContactVelocity).Length() * hammer.SmashValue;
 
-                        target.HammerIndex = hammerIndex;
-                        target.HammerBodyIndex = bodyLocation.Index;
-                        target.TargetIndex = targetBodyLocation.Index;
-                        target.Impulse = -targetCandidate.Normal * impulseSpeed;
-                        target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                            target.HammerIndex = hammerIndex;
+                            target.HammerBodyIndex = bodyLocation.Index;
+                            target.Impulse = -targetCandidate.Normal * impulseSpeed;
+                            target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+
+                            if (targetCandidate.Target.Mobility == CollidableMobility.Dynamic)
+                                target.TargetIndex = targetBodyLocation.Index;
+                            else
+                                target.TargetIndex = -1;
+                        }
+                        else //(targetCandidate.Target.Mobility == CollidableMobility.Static)
+                        {
+                            var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
+
+                            var wxr = Vector3.Cross(hammerVel.Angular, targetCandidate.OffsetFromHammer);
+                            var hammerContactVelocity = hammerVel.Linear + wxr;
+
+                            var impulseSpeed = hammerContactVelocity.Length() * hammer.SmashValue;
+
+                            target.HammerIndex = hammerIndex;
+                            target.HammerBodyIndex = bodyLocation.Index;
+                            target.TargetIndex = -1;
+                            target.Impulse = -targetCandidate.Normal * impulseSpeed;
+                            target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                        }
                     }
                 }
             }
@@ -1095,7 +1121,8 @@ namespace cySim
                     for (int i = 0; i < cache.HammerTargetsToSmash.Count; ++i)
                     {
                         var smash = cache.HammerTargetsToSmash[i];
-                        BodyReference.ApplyImpulse(Simulation.Bodies.ActiveSet, smash.TargetIndex, smash.Impulse, smash.ImpulseOffset);
+                        if (smash.TargetIndex >= 0)
+                            BodyReference.ApplyImpulse(Simulation.Bodies.ActiveSet, smash.TargetIndex, smash.Impulse, smash.ImpulseOffset);
 
                         ref var hammer = ref hammers[smash.HammerIndex];
                         hammer.HammerState = HammerState.RECOIL;

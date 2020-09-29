@@ -86,7 +86,7 @@ namespace cyFight
 
             hamGraphics = new Cylinder_MRT(renderer, em, 0);
             hamGraphics.color = Color.Blue;
-            hamGraphics.scale = new Vector3(0.25f, 0.75f, 0.25f);
+            hamGraphics.scale = new Vector3(0.25f, 0.5f, 0.25f);
         }
 
         bool onPointerEvent(PointerEventArgs args)
@@ -168,7 +168,7 @@ namespace cyFight
         {
             var c = sim.Players[charIndex];
 
-            input.MoveDirection = cam.getForwardVec();
+            input.ViewDirection = cam.getForwardVec();
 
             var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
             var cPos = characterBody.Pose.Position;
@@ -199,7 +199,7 @@ namespace cyFight
             this.renderer = stage.renderer;
 
             cam = new TPVCamera(stage.renderer.ResolutionWidth / (float)stage.renderer.ResolutionHeight, Vector3.Zero, Vector3.One, 0, 0);
-            cam.Offset = new Vector3(0, 0.5f * 1.2f, (0.75f) * 4f);
+            cam.Offset = new Vector3(0, 0.5f * 1.2f, (0.75f) * 7f);
 
             sim = new CySim();
         }
@@ -262,6 +262,13 @@ namespace cyFight
                 new MagicBox(sim.Simulation, renderer, em, h);
             }
 
+            //var b = sim.Simulation.Bodies.Add(BodyDescription.CreateConvexKinematic(new RigidPose(new Vector3(0, 1, 30), Quaternion.Identity), sim.Simulation.Shapes, new Box(2, 2, 2)));
+
+            var t = new Box_MRT(renderer, em, 0);
+            t.color = Color.Yellow;
+            t.position = new Vector3(0, 0.5f, 30);
+            t.rotation = Matrix3x3.Identity;
+            t.scale = new Vector3(2, 1f, 2);
 
             //add lights
             Vector3 lightDir = Vector3.Normalize(new Vector3(0.25f, -1, -0.5f));

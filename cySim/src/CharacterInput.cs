@@ -12,7 +12,7 @@ namespace cySim
 {
     public struct PlayerInput
     {
-        public Vector3 MoveDirection;
+        public Vector3 ViewDirection;
         public bool MoveForward, MoveBackward, MoveLeft, MoveRight;
         public bool TryJump;
         public bool Sprint;
@@ -53,6 +53,13 @@ namespace cySim
             SpringSettings = new SpringSettings(30, 1)
         };
 
+        static AngularServo Constraints_ANGULAR_SMASH = new AngularServo
+        {
+            TargetRelativeRotationLocalA = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(Math.PI * 0.5f)),
+            ServoSettings = new ServoSettings(10f, 2f, 20f),
+            SpringSettings = new SpringSettings(30, 1)
+        };
+
         static DistanceServo Constraints_DISTANCE = new DistanceServo
         {
             LocalOffsetA = Vector3.UnitX * 0.25f,
@@ -62,15 +69,26 @@ namespace cySim
             SpringSettings = new SpringSettings(30, 1)
         };
 
-        static OneBodyAngularServo Constraints_CHAR_ANGULAR = new OneBodyAngularServo
+        static AngularHinge Constraints_CHAR_STANDING = new AngularHinge
         {
-            TargetOrientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 1f),
-            ServoSettings = new ServoSettings(5, 5, 20f),
+            LocalHingeAxisA = Vector3.UnitY,
+            LocalHingeAxisB = Vector3.UnitY,
             SpringSettings = new SpringSettings(30, 1)
+        };
+
+        static OneBodyAngularMotor Constraints_CHAR_LOOKAT = new OneBodyAngularMotor
+        {
+            TargetVelocity = Vector3.Zero,
+            Settings = new MotorSettings
+            {
+                MaximumForce = 100,
+                Softness = 0
+            }
         };
 
         BodyHandle bodyHandle;
         ConstraintHandle bodyAngularHandle;
+        ConstraintHandle bodyLookAtHandle;
         CharacterControllers characters;
         float speed;
         Capsule shape;
@@ -94,9 +112,8 @@ namespace cySim
             this.characters = characters;
             var shapeIndex = characters.Simulation.Shapes.Add(shape);
 
-            //Because characters are dynamic, they require a defined BodyInertia. For the purposes of the demos, we don't want them to rotate or fall over, so the inverse inertia tensor is left at its default value of all zeroes.
-            //This is effectively equivalent to giving it an infinite inertia tensor- in other words, no torque will cause it to rotate.
-            bodyHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(initialPosition, new BodyInertia { InverseMass = 1f / mass, InverseInertiaTensor = new Symmetric3x3 { XX = 1, YY = 1, ZZ = 1 } }, new CollidableDescription(shapeIndex, speculativeMargin), new BodyActivityDescription(shape.Radius * 0.02f)));
+            shape.ComputeInertia(mass, out var bodyInertia);
+            bodyHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(initialPosition, bodyInertia, new CollidableDescription(shapeIndex, speculativeMargin), new BodyActivityDescription(shape.Radius * 0.02f)));
             ref var character = ref characters.AllocateCharacter(bodyHandle);
             character.LocalUp = new Vector3(0, 1, 0);
             character.CosMaximumSlope = MathF.Cos(maximumSlope);
@@ -108,11 +125,19 @@ namespace cySim
             this.speed = speed;
             this.shape = shape;
 
-            bodyAngularHandle = characters.Simulation.Solver.Add(bodyHandle, Constraints_CHAR_ANGULAR);
+            bodyAngularHandle = characters.Simulation.Solver.Add(bodyHandle, characters.FakeKinematic, Constraints_CHAR_STANDING);
+            bodyLookAtHandle = characters.Simulation.Solver.Add(BodyHandle, Constraints_CHAR_LOOKAT);
 
             input = new PlayerInput();
 
-            hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateConvexDynamic(initialPosition + Constraints_POS_IDLE.LocalOffsetA, 0.25f, characters.Simulation.Shapes, new Cylinder(0.25f, 0.5f)));
+            var cylShape = new Cylinder(0.25f, 0.5f);
+            cylShape.ComputeInertia(0.25f, out var cylInertia);
+            var cylIndex = characters.Simulation.Shapes.Add(cylShape);
+            hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                initialPosition + Constraints_POS_IDLE.LocalOffsetA,
+                cylInertia,
+                new CollidableDescription(cylIndex, 0.5f),
+                new BodyActivityDescription(0.01f)));
 
             bsHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, Constraints_POS_IDLE);
             asHandle = characters.Simulation.Solver.Add(bodyHandle, hamHandle, Constraints_ANGULAR);
@@ -155,7 +180,7 @@ namespace cySim
             var characterBody = new BodyReference(bodyHandle, characters.Simulation.Bodies);
             var effectiveSpeed = input.Sprint ? speed * 1.75f : speed;
             var newTargetVelocity = movementDirection * effectiveSpeed;
-            var viewDirection = input.MoveDirection;
+            var viewDirection = input.ViewDirection;
             //Modifying the character's raw data does not automatically wake the character up, so we do so explicitly if necessary.
             //If you don't explicitly wake the character up, it won't respond to the changed motion goals.
             //(You can also specify a negative deactivation threshold in the BodyActivityDescription to prevent the character from sleeping at all.)
@@ -201,6 +226,17 @@ namespace cySim
                 }
             }
 
+            QuaternionEx.Transform(Vector3.UnitZ, characterBody.Pose.Orientation, out var charLookAt);
+            var c = Vector3.Cross(charLookAt, character.LocalUp);
+            c /= c.Length();
+            var v = Vector3.Cross(character.ViewDirection, character.LocalUp);
+            v /= v.Length();
+
+            var a = Vector3.Cross(c, v);
+            float toRot = -Vector3.Dot(a, character.LocalUp);
+            Constraints_CHAR_LOOKAT.TargetVelocity = new Vector3(0, toRot, 0);
+            characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bodyLookAtHandle, ref Constraints_CHAR_LOOKAT);
+
             ref var hammer = ref characters.GetHammerByBodyHandle(hamHandle);
             if (input.TryFire)
             {
@@ -217,6 +253,7 @@ namespace cySim
             {
                 hammer.HammerState = HammerState.IDLE;
                 characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_IDLE);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, ref Constraints_ANGULAR);
             }
             else if (hammer.HammerState == HammerState.SMASH)
             {
@@ -226,7 +263,10 @@ namespace cySim
                 var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, hammer.HammerDT * fireSpeed);
                 QuaternionEx.Transform(Constraints_POS_IDLE.LocalOffsetA, rot, out Constraints_POS_SMASH.LocalOffsetA);
 
+                Constraints_ANGULAR_SMASH.TargetRelativeRotationLocalA = rot * Constraints_ANGULAR.TargetRelativeRotationLocalA;
+
                 characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_SMASH);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, ref Constraints_ANGULAR_SMASH);
             }
 
             /*
