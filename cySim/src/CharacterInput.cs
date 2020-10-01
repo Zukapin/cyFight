@@ -34,7 +34,7 @@ namespace cySim
         {
             LocalOffsetA = Vector3.UnitX * 1.5f,
             LocalOffsetB = Vector3.Zero,
-            ServoSettings = new ServoSettings(2f, 1f, 15f),
+            ServoSettings = new ServoSettings(20f, 10f, 15f),
             SpringSettings = new SpringSettings(30, 1)
         };
 
@@ -65,7 +65,7 @@ namespace cySim
             LocalOffsetA = Vector3.UnitX * 0.25f,
             LocalOffsetB = Vector3.Zero,
             TargetDistance = 1.25f,
-            ServoSettings = new ServoSettings(2f, 1f, 20f),
+            ServoSettings = new ServoSettings(20f, 10f, 20f),
             SpringSettings = new SpringSettings(30, 1)
         };
 
@@ -81,8 +81,8 @@ namespace cySim
             TargetVelocity = Vector3.Zero,
             Settings = new MotorSettings
             {
-                MaximumForce = 100,
-                Softness = 0
+                MaximumForce = 10,
+                Softness = 0f
             }
         };
 
@@ -146,6 +146,8 @@ namespace cySim
             ref var hammer = ref characters.AllocateHammer(hamHandle, bodyHandle);
             hammer.HammerState = HammerState.IDLE;
             hammer.SmashValue = 2;
+
+            input.ViewDirection = -Vector3.UnitZ;
         }
 
 
@@ -187,7 +189,8 @@ namespace cySim
             if (!characterBody.Awake &&
                 ((character.TryJump && character.Supported) ||
                 newTargetVelocity != character.TargetVelocity ||
-                (newTargetVelocity != Vector2.Zero && character.ViewDirection != viewDirection)))
+                (newTargetVelocity != Vector2.Zero && character.ViewDirection != viewDirection) ||
+                input.TryFire))
             {
                 characters.Simulation.Awakener.AwakenBody(character.BodyHandle);
                 characters.Simulation.Awakener.AwakenBody(hamHandle);
@@ -202,9 +205,9 @@ namespace cySim
             //This allows some movement quirks common in some game character controllers.
             //Consider what happens if, starting from a standstill, you accelerate fully along X, then along Z- your full velocity magnitude will be sqrt(2) * maximumAirSpeed.
             //Feel free to try alternative implementations. Again, there is no one correct approach.
+            QuaternionEx.Transform(character.LocalUp, characterBody.Pose.Orientation, out var characterUp);
             if (!character.Supported && movementDirectionLengthSquared > 0)
             {
-                QuaternionEx.Transform(character.LocalUp, characterBody.Pose.Orientation, out var characterUp);
                 var characterRight = Vector3.Cross(character.ViewDirection, characterUp);
                 var rightLengthSquared = characterRight.LengthSquared();
                 if (rightLengthSquared > 1e-10f)
@@ -226,16 +229,28 @@ namespace cySim
                 }
             }
 
-            QuaternionEx.Transform(Vector3.UnitZ, characterBody.Pose.Orientation, out var charLookAt);
-            var c = Vector3.Cross(charLookAt, character.LocalUp);
-            c /= c.Length();
-            var v = Vector3.Cross(character.ViewDirection, character.LocalUp);
-            v /= v.Length();
+            QuaternionEx.Transform(-Vector3.UnitZ, characterBody.Pose.Orientation, out var charLookAt);
+            var charLookAtInPlane = charLookAt - Vector3.Dot(charLookAt, characterUp) * characterUp;
+            var camInPlane = viewDirection - Vector3.Dot(viewDirection, characterUp) * characterUp;
+            var charLookAtLen = charLookAtInPlane.Length();
+            var camInPlaneLen = camInPlane.Length();
 
-            var a = Vector3.Cross(c, v);
-            float toRot = -Vector3.Dot(a, character.LocalUp);
-            Constraints_CHAR_LOOKAT.TargetVelocity = new Vector3(0, toRot, 0);
-            characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bodyLookAtHandle, ref Constraints_CHAR_LOOKAT);
+            //can be invalid if the dot is sufficiently close to 1 that floating point errors make it slightly larger and the acos gets upset
+            var deg = (float)Math.Acos(Math.Min(1f, Vector3.Dot(charLookAtInPlane, camInPlane) / charLookAtLen / camInPlaneLen));
+            {
+                var cross = Vector3.Cross(charLookAtInPlane, camInPlane);
+                float dir = Math.Sign(Vector3.Dot(cross, characterUp));
+
+                //goal rotation is dir * deg
+                //our target velocity should be larger than that, but taper off as the goal is close
+                //goal / dt sets our target velocity to hit the goal in the next frame -- this is minimized by the maximum force of the constraint
+                //this doesn't take into account momentum -- so we actually want to fudge it a bit with current angular velocity
+                //this is basically a pid controller so whatever
+                float toRot = (dir * deg - characterBody.Velocity.Angular.Y * 0.5f) / dt;
+
+                Constraints_CHAR_LOOKAT.TargetVelocity = new Vector3(0, toRot, 0);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bodyLookAtHandle, ref Constraints_CHAR_LOOKAT);
+            }
 
             ref var hammer = ref characters.GetHammerByBodyHandle(hamHandle);
             if (input.TryFire)

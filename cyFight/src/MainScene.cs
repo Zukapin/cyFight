@@ -41,31 +41,60 @@ namespace cyFight
         public const string SPRINT = "SPRINT";
     }
 
-    class TestPlayer
+    class Player
     {
         CySim sim;
-        GameStage stage;
-        Renderer renderer;
-        EventManager em;
+        public int playerIndex;
+        public ref PlayerInput input { get { return ref sim.Players[playerIndex].Input; } }
 
-        TPVCamera cam;
-        int charIndex;
-        Capsule_MRT charGraphics;
+        protected Capsule_MRT charGraphics;
+        protected Cylinder_MRT hamGraphics;
 
-        Cylinder_MRT hamGraphics;
-
-        ref PlayerInput input { get { return ref sim.Players[charIndex].Input; } }
-
-        public TestPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam, CySim sim)
+        public Player(CySim sim, Renderer renderer, EventManager em, Vector3 startPos)
         {
-            this.stage = stage;
-            this.renderer = renderer;
-            this.em = em;
-            this.cam = cam;
             this.sim = sim;
 
-            em.addUpdateListener(0, onUpdate);
-            em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
+            playerIndex = sim.AddPlayer(startPos);
+
+            charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
+
+            hamGraphics = new Cylinder_MRT(renderer, em, 0);
+            hamGraphics.color = Color.Blue;
+            hamGraphics.scale = new Vector3(0.25f, 0.5f, 0.25f);
+
+            em.addUpdateListener(0, GraphicsUpdate);
+        }
+
+        void GraphicsUpdate(float dt)
+        {
+            var c = sim.Players[playerIndex];
+
+            var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
+            var cPos = characterBody.Pose.Position;
+            charGraphics.position = cPos;
+            charGraphics.rotation = Matrix3x3.CreateFromQuaternion(characterBody.Pose.Orientation);
+
+            var hammerBody = new BodyReference(c.HammerHandle, sim.Simulation.Bodies);
+            var hPose = hammerBody.Pose;
+
+            hamGraphics.position = hPose.Position;
+            hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(hPose.Orientation);
+        }
+    }
+
+    class MyPlayer : Player
+    {
+        TPVCamera cam;
+        GameStage stage;
+
+
+        public MyPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam, CySim sim, Vector3 startPos)
+            : base(sim, renderer, em, startPos)
+        {
+            this.stage = stage;
+            this.cam = cam;
+
+            em.addUpdateListener(0, Update);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.FORWARD, OnMoveForward);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.BACKWARD, OnMoveBackward);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.LEFT, OnMoveLeft);
@@ -75,21 +104,10 @@ namespace cyFight
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.SPRINT, OnSprint);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.JUMP, OnJump);
             em.addEventHandler((int)InterfacePriority.LOW, ActionTypes.FIRE, OnFire);
-            em.addEventHandler((int)InterfacePriority.HIGHEST, onPointerEvent);
+            em.addEventHandler((int)InterfacePriority.HIGHEST, OnPointerEvent);
         }
 
-        public void Init()
-        {
-            charIndex = sim.AddPlayer();
-
-            charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
-
-            hamGraphics = new Cylinder_MRT(renderer, em, 0);
-            hamGraphics.color = Color.Blue;
-            hamGraphics.scale = new Vector3(0.25f, 0.5f, 0.25f);
-        }
-
-        bool onPointerEvent(PointerEventArgs args)
+        bool OnPointerEvent(PointerEventArgs args)
         {
             if (args.type == PointerEventType.AIM)
             {
@@ -157,30 +175,10 @@ namespace cyFight
             return true;
         }
 
-        bool OnExit(ActionEventArgs args)
+        void Update(float dt)
         {
-            stage.Exit();
-            return true;
-        }
-
-
-        void onUpdate(float dt)
-        {
-            var c = sim.Players[charIndex];
-
             input.ViewDirection = cam.getForwardVec();
-
-            var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
-            var cPos = characterBody.Pose.Position;
-            cam.AnchorPos = cPos;
-            charGraphics.position = cPos;
-            charGraphics.rotation = Matrix3x3.CreateFromQuaternion(characterBody.Pose.Orientation);
-
-            var hammerBody = new BodyReference(c.HammerHandle, sim.Simulation.Bodies);
-            var hPose = hammerBody.Pose;
-
-            hamGraphics.position = hPose.Position;
-            hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(hPose.Orientation);
+            cam.AnchorPos = charGraphics.position;
         }
     }
 
@@ -275,8 +273,10 @@ namespace cyFight
             var l = new DirectionalLight(renderer, em, lightDir, Color.White, 1);
             //l = new DirectionalLight(renderer, em, Vector3.UnitY, Color.White, 0.1f);
 
-            var player = new TestPlayer(stage, renderer, em, cam, sim);
-            player.Init();
+            var player = new MyPlayer(stage, renderer, em, cam, sim, new Vector3(0, 1, 20));
+            new Player(sim, renderer, em, new Vector3(0, 1, 25));
+
+            em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
         }
 
         public void Update(float dt)
@@ -287,6 +287,12 @@ namespace cyFight
         public ICamera GetCamera()
         {
             return cam;
+        }
+
+        bool OnExit(ActionEventArgs args)
+        {
+            stage.Exit();
+            return true;
         }
 
         public void Dispose()

@@ -73,9 +73,9 @@ namespace cySim
             Simulation.Statics.Add(new StaticDescription(new Vector3(0, 0.5f, 30), new CollidableDescription(Simulation.Shapes.Add(new Box(2, 1f, 2)), 0.1f)));
         }
 
-        public int AddPlayer()
+        public int AddPlayer(Vector3 startPos)
         {
-            var newChar = new CharacterInput(characters, new Vector3(0, 1, 20), new Capsule(0.5f, 1), 0.1f, 1f, 15f, 10f, 6f, 4f);
+            var newChar = new CharacterInput(characters, startPos, new Capsule(0.5f, 1), 0.1f, 1f, 15f, 10f, 6f, 4f);
 
             Players.Add(newChar);
             return Players.Count - 1;
