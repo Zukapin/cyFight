@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Numerics;
-using log;
+using cyUtility;
 using cylib;
 
 using BepuUtilities;
@@ -19,6 +19,7 @@ using System.Threading;
 using System.Diagnostics;
 using System.Reflection.Metadata.Ecma335;
 using cySim;
+using Lidgren.Network;
 
 namespace cyFight
 {
@@ -182,6 +183,29 @@ namespace cyFight
         }
     }
 
+    class NetworkCallbacks : INetworkCallbacks
+    {
+        public void OnConnect()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Connected callback");
+        }
+
+        public void OnConnectionFailed()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Connection failed callback");
+        }
+
+        public void OnData(NetIncomingMessage msg)
+        {
+            Logger.WriteLine(LogType.DEBUG, "Data callback");
+        }
+
+        public void OnDisconnect()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Disconect callback");
+        }
+    }
+
     class TestScene : IScene
     {
         TPVCamera cam;
@@ -190,6 +214,8 @@ namespace cyFight
         Renderer renderer;
 
         CySim sim;
+        Network network;
+        NetworkCallbacks networkCallbacks;
 
         public TestScene(GameStage stage)
         {
@@ -200,6 +226,7 @@ namespace cyFight
             cam.Offset = new Vector3(0, 0.5f * 1.2f, (0.75f) * 7f);
 
             sim = new CySim();
+            networkCallbacks = new NetworkCallbacks();
         }
 
         public float LoadTime()
@@ -277,10 +304,15 @@ namespace cyFight
             new Player(sim, renderer, em, new Vector3(0, 1, 25));
 
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
+
+            network = new Network(networkCallbacks);
+            network.Connect();
         }
 
         public void Update(float dt)
         {
+            network.ReadMessages();
+            network.SendMessages();
             sim.Update(dt);
         }
 

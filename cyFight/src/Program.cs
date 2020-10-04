@@ -25,6 +25,7 @@ namespace cyFight
 
             stage.switchToScene(scene);
 
+            //so this needs to be updated, only works because vsync is on >.>
             while (stage.Update(0.016667))
             {
                 stage.Draw();

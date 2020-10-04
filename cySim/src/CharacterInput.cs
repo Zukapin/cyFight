@@ -6,8 +6,6 @@ using System.Diagnostics;
 using BepuUtilities;
 using BepuPhysics.Constraints;
 
-using cylib;
-
 namespace cySim
 {
     public struct PlayerInput

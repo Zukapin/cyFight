@@ -22,6 +22,8 @@ namespace cySim
 
         public List<CharacterInput> Players;
 
+        public int CurrentFrame { get; private set; }
+
         public CySim()
         {
             Players = new List<CharacterInput>();
@@ -89,6 +91,8 @@ namespace cySim
             }
 
             Simulation.Timestep(dt, ThreadDispatcher);
+
+            CurrentFrame++;
         }
     }
 }
