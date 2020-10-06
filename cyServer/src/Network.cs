@@ -32,15 +32,11 @@ namespace cyServer
     {
         const int PORT = 6114;
         NetServer serv;
-        Random random;
 
-        CySim sim;
+        Level CurLevel;
 
-        public Network(CySim sim)
+        public Network()
         {
-            this.sim = sim;
-            random = new Random();
-
             var config = new NetPeerConfiguration("cyfight");
             config.AutoFlushSendQueue = false;
             config.AcceptIncomingConnections = true;
@@ -66,86 +62,45 @@ namespace cyServer
 
             config.Port = PORT; //local port
 
-            sim.Load(out var bodyHandles);
+            CurLevel = Level.LoadLevel(0, this);
 
             serv = new NetServer(config);
             serv.Start(); //this sleeps for 50ms >.>
         }
 
+        public NetOutgoingMessage CreateMessage()
+        {
+            return serv.CreateMessage();
+        }
+
+        public void Send(NetOutgoingMessage msg, NetConnection conn, NetDeliveryMethod method, int sequence)
+        {
+            serv.SendMessage(msg, conn, method, sequence);
+        }
+
         void OnConnect(NetConnection conn)
         {
-            Vector3 startPos = new Vector3(0, 10, 20);
-            var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(random.NextDouble() * Math.PI * 2));
-            startPos = QuaternionEx.Transform(startPos, rot);
-            var playerID = sim.AddPlayer(startPos);
-
-            var msgToNewPlayer = serv.CreateMessage();
-            msgToNewPlayer.Write((int)DataIDSend.NEW_PLAYER_YOU);
-            msgToNewPlayer.Write(sim.CurrentFrame);
-            msgToNewPlayer.Write(playerID);
-            SerializeState(ref msgToNewPlayer);
-            serv.SendMessage(msgToNewPlayer, conn, NetDeliveryMethod.ReliableOrdered, 0);
-
-            /*
-            var msgToOtherPlayers = serv.CreateMessage();
-            msgToOtherPlayers.Write((int)DataIDSend.NEW_PLAYER);
-            msgToOtherPlayers.Write(sim.CurrentFrame);
-            msgToOtherPlayers.Write(playerID);
-            msgToOtherPlayers.Write(startPos.X);
-            msgToOtherPlayers.Write(startPos.Y);
-            msgToOtherPlayers.Write(startPos.Z);
-            serv.SendToAll(msgToOtherPlayers, conn, NetDeliveryMethod.ReliableOrdered, 0);
-            */
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SerializePlayerInput(ref PlayerInput input, ref NetOutgoingMessage msg)
-        {
-            msg.Write(input.MoveForward);
-            msg.Write(input.MoveBackward);
-            msg.Write(input.MoveLeft);
-            msg.Write(input.MoveRight);
-            msg.Write(input.Sprint);
-            msg.Write(input.TryJump); //do we even want to send these?
-            msg.Write(input.TryFire);
-            msg.WritePadBits();
-            msg.Write(input.ViewDirection.X);
-            msg.Write(input.ViewDirection.Y);
-            msg.Write(input.ViewDirection.Z);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SerializeState(ref NetOutgoingMessage msg)
-        {
-            msg.Write(sim.Players.Count);
-            for (int i = 0; i < sim.Players.Count; i++)
-            {
-                var p = sim.Players[i];
-                msg.Write(i);
-                SerializeFullBody(p.BodyHandle, ref msg);
-                SerializeFullBody(p.HammerHandle, ref msg);
-                SerializePlayerInput(ref p.Input, ref msg);
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SerializeFullBody(BodyHandle handle, ref NetOutgoingMessage msg)
-        {
-            var bodyRef = new BodyReference(handle, sim.Simulation.Bodies);
-            msg.Write(handle.Value);
+            CurLevel.OnConnect(conn);
         }
 
         void OnDisconnect(NetConnection conn)
         {
-
+            CurLevel.OnDisconnect(conn);
         }
 
         void OnData(NetIncomingMessage msg)
         {
-
+            CurLevel.OnData(msg);
         }
 
-        public void SendMessages()
+        void Update(float dt)
+        {
+            ReadMessages();
+            CurLevel.Update(dt);
+            SendMessages();
+        }
+
+        void SendMessages()
         {//called after physics update
             serv.FlushSendQueue();
         }
@@ -198,6 +153,63 @@ namespace cyServer
                         break;
                 }
             }
+        }
+
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void SerializePlayerInput(ref PlayerInput input, NetOutgoingMessage msg)
+        {
+            msg.Write(input.MoveForward);
+            msg.Write(input.MoveBackward);
+            msg.Write(input.MoveLeft);
+            msg.Write(input.MoveRight);
+            msg.Write(input.Sprint);
+            msg.Write(input.TryJump); //do we even want to send these?
+            msg.Write(input.TryFire);
+            msg.WritePadBits();
+            msg.Write(input.ViewDirection.X);
+            msg.Write(input.ViewDirection.Y);
+            msg.Write(input.ViewDirection.Z);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void SerializePlayer(int i, CySim sim, NetOutgoingMessage msg)
+        {
+            var p = sim.Players[i];
+            msg.Write(i);
+            SerializeBody(p.BodyHandle, sim.Simulation, msg);
+            //possibly send character support or other status here
+            SerializeBody(p.HammerHandle, sim.Simulation, msg);
+            ref var h = ref p.Hammer;
+            msg.Write((byte)h.HammerState);
+            msg.Write(h.HammerDT);
+            SerializePlayerInput(ref p.Input, msg);
+        }
+
+        /// <summary>
+        /// Serializes a dynamic body's current state -- position, orientation, linear velocity, angular velocity
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void SerializeBody(BodyHandle handle, Simulation Simulation, NetOutgoingMessage msg)
+        {
+            var bodyRef = new BodyReference(handle, Simulation.Bodies);
+            var pose = bodyRef.Pose;
+            var vel = bodyRef.Velocity;
+
+            msg.Write(handle.Value);
+            msg.Write(pose.Position.X);
+            msg.Write(pose.Position.Y);
+            msg.Write(pose.Position.Z);
+            msg.Write(pose.Orientation.X);
+            msg.Write(pose.Orientation.Y);
+            msg.Write(pose.Orientation.Z);
+            msg.Write(pose.Orientation.W);
+            msg.Write(vel.Linear.X);
+            msg.Write(vel.Linear.Y);
+            msg.Write(vel.Linear.Z);
+            msg.Write(vel.Angular.X);
+            msg.Write(vel.Angular.Y);
+            msg.Write(vel.Angular.Z);
         }
     }
 }

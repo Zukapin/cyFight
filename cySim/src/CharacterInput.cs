@@ -95,6 +95,7 @@ namespace cySim
         public BodyHandle HammerHandle { get { return hamHandle; } }
 
         public ref PlayerInput Input { get { return ref input; } }
+        public ref HammerAttachment Hammer { get { return ref characters.GetHammerByBodyHandle(HammerHandle); } }
 
         PlayerInput input;
 

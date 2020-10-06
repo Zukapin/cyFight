@@ -14,8 +14,7 @@ namespace cyServer
         static Stopwatch watch = new Stopwatch();
         static void Main(string[] args)
         {
-            var sim = new CySim();
-            var net = new Network(sim);
+            var net = new Network();
 
             double elapsed = 0;
             watch.Start();
@@ -31,9 +30,7 @@ namespace cyServer
                 watch.Restart();
                 while (elapsed > GoalTimestep)
                 {
-                    net.ReadMessages();
-                    sim.Update(Timestep);
-                    net.SendMessages();
+                    net.Update(Timestep);
                     elapsed -= GoalTimestep;
                 }
             }
