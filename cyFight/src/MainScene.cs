@@ -46,7 +46,7 @@ namespace cyFight
     {
         CySim sim;
         public int playerIndex;
-        public ref PlayerInput input { get { return ref sim.Players[playerIndex].Input; } }
+        public ref PlayerInput input { get { return ref sim.GetPlayer(playerIndex).Input; } }
 
         protected Capsule_MRT charGraphics;
         protected Cylinder_MRT hamGraphics;
@@ -68,7 +68,7 @@ namespace cyFight
 
         void GraphicsUpdate(float dt)
         {
-            var c = sim.Players[playerIndex];
+            var c = sim.GetPlayer(playerIndex);
 
             var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
             var cPos = characterBody.Pose.Position;

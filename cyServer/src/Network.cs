@@ -17,17 +17,6 @@ using BepuPhysics;
 
 namespace cyServer
 {
-    enum DataIDSend : int
-    {
-        NEW_PLAYER = 0,
-        NEW_PLAYER_YOU = 1,
-    }
-
-    enum DataIDRecv : int
-    {
-
-    }
-
     class Network
     {
         const int PORT = 6114;
@@ -78,6 +67,19 @@ namespace cyServer
             serv.SendMessage(msg, conn, method, sequence);
         }
 
+        public void Send(NetOutgoingMessage msg, List<NetConnection> conn, NetDeliveryMethod method, int sequence)
+        {
+            serv.SendMessage(msg, conn, method, sequence);
+        }
+
+        public int MTU
+        {
+            get
+            {
+                return 1500;
+            }
+        }
+
         void OnConnect(NetConnection conn)
         {
             CurLevel.OnConnect(conn);
@@ -93,7 +95,7 @@ namespace cyServer
             CurLevel.OnData(msg);
         }
 
-        void Update(float dt)
+        public void Update(float dt)
         {
             ReadMessages();
             CurLevel.Update(dt);
@@ -156,26 +158,11 @@ namespace cyServer
         }
 
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void SerializePlayerInput(ref PlayerInput input, NetOutgoingMessage msg)
-        {
-            msg.Write(input.MoveForward);
-            msg.Write(input.MoveBackward);
-            msg.Write(input.MoveLeft);
-            msg.Write(input.MoveRight);
-            msg.Write(input.Sprint);
-            msg.Write(input.TryJump); //do we even want to send these?
-            msg.Write(input.TryFire);
-            msg.WritePadBits();
-            msg.Write(input.ViewDirection.X);
-            msg.Write(input.ViewDirection.Y);
-            msg.Write(input.ViewDirection.Z);
-        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void SerializePlayer(int i, CySim sim, NetOutgoingMessage msg)
         {
-            var p = sim.Players[i];
+            var p = sim.GetPlayer(i);
             msg.Write(i);
             SerializeBody(p.BodyHandle, sim.Simulation, msg);
             //possibly send character support or other status here
@@ -183,7 +170,7 @@ namespace cyServer
             ref var h = ref p.Hammer;
             msg.Write((byte)h.HammerState);
             msg.Write(h.HammerDT);
-            SerializePlayerInput(ref p.Input, msg);
+            NetInterop.SerializePlayerInput(ref p.Input, msg);
         }
 
         /// <summary>

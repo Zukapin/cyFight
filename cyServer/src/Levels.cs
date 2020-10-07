@@ -18,6 +18,9 @@ using System.ComponentModel;
 using Lidgren.Network;
 using System.Runtime.InteropServices;
 using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
+using System.Diagnostics;
+using cyUtility;
 
 namespace cyServer
 {
@@ -260,12 +263,17 @@ namespace cyServer
         List<IBodyDesc> bodyDesc;
 
         Random Random = new Random();
+        List<NetConnection> connections = new List<NetConnection>();
+
+        QuickList<BodyHandle> dynBodies;
+
         public LevelOne(Network Network)
         {
             this.Network = Network;
             sim = new CySim();
             sim.Init();
 
+            dynBodies = new QuickList<BodyHandle>(1024, sim.BufferPool);
             bodyDesc = new List<IBodyDesc>();
             bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2500, 1, 2500), 0.1f, new Vector3(0, -0.5f, 0), Quaternion.Identity));
             bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2, 1, 2), 0.1f, new Vector3(0, 0.5f, 30), Quaternion.Identity));
@@ -277,8 +285,8 @@ namespace cyServer
             cylShape.ComputeInertia(1f, out var cylInertia);
             var cylIndex = Simulation.Shapes.Add(cylShape);
 
-            const int pyramidCount = 4;
-            const int rowCount = 30;
+            const int pyramidCount = 1;
+            const int rowCount = 2;
             var cylinders = new List<BodyHandle>();
             for (int pyramidIndex = 0; pyramidIndex < pyramidCount; ++pyramidIndex)
             {
@@ -296,6 +304,7 @@ namespace cyServer
                             new BodyActivityDescription(0.01f)));
 
                         cylinders.Add(h);
+                        dynBodies.Add(h, sim.BufferPool);
                     }
                 }
             }
@@ -312,8 +321,8 @@ namespace cyServer
                 b.Serialize(msg, Simulation);
             }
 
-            msg.Write(sim.Players.Count);
-            for (int i = 0; i < sim.Players.Count; i++)
+            msg.Write(sim.PlayerCount);
+            for (int i = 0; i < sim.PlayerCount; i++)
             {
                 Network.SerializePlayer(i, sim, msg);
             }
@@ -325,33 +334,83 @@ namespace cyServer
             var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(Random.NextDouble() * Math.PI * 2));
             startPos = QuaternionEx.Transform(startPos, rot);
             var playerID = sim.AddPlayer(startPos);
+            conn.Tag = playerID;
 
             var msgToNewPlayer = Network.CreateMessage();
-            msgToNewPlayer.Write((int)DataIDSend.NEW_PLAYER_YOU);
+            msgToNewPlayer.Write((int)NetServerToClient.NEW_PLAYER_YOU);
             msgToNewPlayer.Write(playerID);
             SerializeAll(msgToNewPlayer);
             Network.Send(msgToNewPlayer, conn, NetDeliveryMethod.ReliableOrdered, 0);
 
-            /*
-            var msgToOtherPlayers = serv.CreateMessage();
-            msgToOtherPlayers.Write((int)DataIDSend.NEW_PLAYER);
+            var msgToOtherPlayers = Network.CreateMessage();
+            msgToOtherPlayers.Write((int)NetServerToClient.NEW_PLAYER);
             msgToOtherPlayers.Write(sim.CurrentFrame);
             msgToOtherPlayers.Write(playerID);
             msgToOtherPlayers.Write(startPos.X);
             msgToOtherPlayers.Write(startPos.Y);
             msgToOtherPlayers.Write(startPos.Z);
-            serv.SendToAll(msgToOtherPlayers, conn, NetDeliveryMethod.ReliableOrdered, 0);
-            */
+            Network.Send(msgToOtherPlayers, connections, NetDeliveryMethod.ReliableOrdered, 0);
+
+            connections.Add(conn);
         }
 
         public override void OnData(NetIncomingMessage msg)
         {
-            throw new NotImplementedException();
+            var playerID = msg.SenderConnection.Tag as int?;
+            if (!playerID.HasValue)
+            {
+                Logger.WriteLine(LogType.ERROR, "Conn on data doesn't have a player ID tag");
+                return;
+            }
+
+            if (!sim.PlayerExists(playerID.Value))
+            {
+                Logger.WriteLine(LogType.ERROR, "Data connection has an invalid player ID tag? " + playerID.Value);
+                return;
+            }
+
+            var msgID = (NetClientToServer)msg.ReadInt32();
+            if (!Enum.IsDefined(msgID))
+            {
+                Logger.WriteLine(LogType.POSSIBLE_ERROR, "Recieved an invalid message ID " + (int)msgID + " from: " + msg.SenderConnection);
+                return;
+            }
+
+            switch (msgID)
+            {
+                case NetClientToServer.PLAYER_INPUT:
+                    var player = sim.GetPlayer(playerID.Value);
+                    NetInterop.ReadPlayerInput(ref player.Input, msg);
+                    break;
+                default:
+                    Logger.WriteLine(LogType.ERROR, "Unhandled message type on server data: " + msgID);
+                    break;
+            }
         }
 
         public override void OnDisconnect(NetConnection conn)
         {
-            throw new NotImplementedException();
+            var playerID = conn.Tag as int?;
+            if (!playerID.HasValue)
+            {
+                Logger.WriteLine(LogType.ERROR, "Conn on disconnect doesn't have a player ID tag");
+                return;
+            }
+
+            if (!sim.PlayerExists(playerID.Value))
+            {
+                Logger.WriteLine(LogType.ERROR, "Disconnected connection has an invalid player ID tag? " + playerID.Value);
+                return;
+            }
+
+            connections.Remove(conn);
+            sim.RemovePlayer(playerID.Value);
+
+            var msg = Network.CreateMessage();
+            msg.Write((int)NetServerToClient.REMOVE_PLAYER);
+            msg.Write(sim.CurrentFrame);
+            msg.Write(playerID.Value);
+            Network.Send(msg, connections, NetDeliveryMethod.ReliableOrdered, 0);
         }
 
         public override void Update(float dt)
@@ -362,8 +421,23 @@ namespace cyServer
         }
         
         public void SendUpdateMessages()
-        { 
-
+        {
+            //doing a very dumb 'send everything to everyone' plan
+            var msg = Network.CreateMessage();
+            msg.Write((int)NetServerToClient.STATE_UPDATE);
+            msg.Write(sim.CurrentFrame);
+            msg.Write(sim.PlayerCount);
+            for (int i = 0; i < sim.PlayerCount; i++)
+            {
+                Network.SerializePlayer(i, sim, msg);
+            }
+            msg.Write(dynBodies.Count);
+            for (int i = 0; i < dynBodies.Count; i++)
+            {
+                Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
+            }
+            Debug.Assert(msg.LengthBytes <= Network.MTU, "Player state update is larger than network MTU");
+            Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);
         }
     }
 }

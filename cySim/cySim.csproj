@@ -15,5 +15,6 @@
     <ProjectReference Include="..\..\cylib\cyUtility\cyUtility.csproj" />
     <ProjectReference Include="..\..\bepuphysics2\BepuPhysics\BepuPhysics.csproj" />
     <ProjectReference Include="..\..\bepuphysics2\BepuUtilities\BepuUtilities.csproj" />
+    <ProjectReference Include="..\..\lidgren-network-gen3\Lidgren.Network.MultiTarget\Lidgren.Network.MultiTarget.csproj" />
   </ItemGroup>
 </Project>
