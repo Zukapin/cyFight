@@ -20,6 +20,7 @@ using System.Diagnostics;
 using System.Reflection.Metadata.Ecma335;
 using cySim;
 using Lidgren.Network;
+using System.Reflection.Metadata;
 
 namespace cyFight
 {
@@ -226,6 +227,10 @@ namespace cyFight
                 Assets.TEX_DUCK,
                 Renderer.DefaultAssets.VB_QUAD_POS_TEX_UNIT,
                 Renderer.DefaultAssets.BUF_WORLD,
+                Renderer.DefaultAssets.FONT_DEFAULT,
+                Renderer.DefaultAssets.SH_FONT_SDF,
+                Renderer.DefaultAssets.BUF_FONT,
+                Renderer.DefaultAssets.BUF_COLOR
             };
         }
 
@@ -248,7 +253,6 @@ namespace cyFight
 
         public void LoadUpdate(float dt)
         {
-            /*
             if (loadTextChanged)
             {
                 lock (loadFont)
@@ -257,11 +261,12 @@ namespace cyFight
                     loadTextChanged = false;
                 }
             }
-            */
         }
 
         public void LoadEnd()
         {
+            loadFont = null;
+            loadText = null;
         }
 
         public bool Draw3D()
@@ -269,8 +274,11 @@ namespace cyFight
             return true;
         }
 
+        bool doneLoading = false;
+        EventManager load_em;
         public void Load(EventManager em)
         {
+            load_em = em;
             sim = new CySim();
             network = new Network(this);
             network.Connect();
@@ -281,7 +289,7 @@ namespace cyFight
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
 
 
-            while (true)
+            while (!doneLoading)
             {
                 network.ReadMessages();
 
@@ -317,14 +325,217 @@ namespace cyFight
 
             lock (loadFont)
             {
-                loadText = "Connected, waiting on data from server";
+                loadText = "Connection failed, deleting sys32";
                 loadTextChanged = true;
             }
+
+            Thread.Sleep(2000);
+            OnExit(default);
+            doneLoading = true;
         }
 
         public void OnData(NetIncomingMessage msg)
         {
-            Logger.WriteLine(LogType.DEBUG, "Data callback");
+            Logger.WriteLine(LogType.VERBOSE3, "Data callback");
+
+            var msgID = (NetServerToClient)msg.ReadInt32();
+            if (!Enum.IsDefined(msgID))
+            {
+                Logger.WriteLine(LogType.POSSIBLE_ERROR, "Recieved an invalid message ID " + (int)msgID + " from: " + msg.SenderConnection);
+                return;
+            }
+
+            switch (msgID)
+            {
+                case NetServerToClient.NEW_PLAYER:
+                    Logger.WriteLine(LogType.DEBUG, "New player joined");
+                    break;
+                case NetServerToClient.NEW_PLAYER_YOU:
+                    Logger.WriteLine(LogType.DEBUG, "I joined " + msg.LengthBytes);
+                    lock (loadFont)
+                    {
+                        loadText = "Data recieved, initializing";
+                        loadTextChanged = true;
+                    }
+                    OnLevelData(msg);
+                    break;
+                case NetServerToClient.REMOVE_PLAYER:
+                    Logger.WriteLine(LogType.DEBUG, "Player removed");
+                    break;
+                case NetServerToClient.STATE_UPDATE:
+                    break;
+                default:
+                    Logger.WriteLine(LogType.POSSIBLE_ERROR, "Unhandled message type from server " + msgID);
+                    break;
+            }
+        }
+
+        void OnLevelData(NetIncomingMessage msg)
+        {
+            var myPlayerID = msg.ReadInt32();
+            var startFrame = msg.ReadInt32();
+            sim.Init(startFrame);
+
+            var bodyCount = msg.ReadInt32();
+            for (int i = 0; i < bodyCount; i++)
+            {
+                OnBodyData(msg);
+            }
+        }
+
+        void OnBodyData(NetIncomingMessage msg)
+        {
+            var typeByte = msg.ReadByte();
+            bool isMulti = false;
+            if (typeByte == (byte)BodyType.MULTI)
+            {
+                isMulti = true;
+                typeByte = msg.ReadByte();
+            }
+
+            var staticBit = typeByte & (byte)BodyType.STATIC;
+            bool isStatic = staticBit != 0;
+            var type = (BodyType)(typeByte - staticBit);
+
+            if (!Enum.IsDefined(type))
+            {
+                //this should probably just hard error out
+                Logger.WriteLine(LogType.ERROR, "Invalid body type in body data " + typeByte + " " + staticBit + " " + isMulti);
+                return;
+            }
+
+            TypedIndex shapeIndex = default;
+            float specMargin = -1;
+            IBodyRenderer body = null;
+            float mass = -1;
+            BodyInertia inertia = default;
+            switch (type)
+            {
+                case BodyType.BOX:
+                    {
+                        var width = msg.ReadFloat();
+                        var height = msg.ReadFloat();
+                        var length = msg.ReadFloat();
+
+                        var box = new Box(width, height, length);
+                        if (!isStatic)
+                        {
+                            mass = msg.ReadFloat();
+                            box.ComputeInertia(mass, out inertia);
+                        }
+                        specMargin = msg.ReadFloat();
+
+                        shapeIndex = sim.Simulation.Shapes.Add(box);
+                        body = new BoxThingy(width, height, length, renderer, load_em);
+                    }
+                    break;
+                case BodyType.CYLINDER:
+                    {
+                        var radius = msg.ReadFloat();
+                        var length = msg.ReadFloat();
+
+                        var cyl = new Cylinder(radius, length);
+                        if (!isStatic)
+                        {
+                            mass = msg.ReadFloat();
+                            cyl.ComputeInertia(mass, out inertia);
+                        }
+                        specMargin = msg.ReadFloat();
+
+                        shapeIndex = sim.Simulation.Shapes.Add(cyl);
+                        body = new CylinderThingy(radius, length, renderer, load_em);
+                    }
+                    break;
+                default:
+                    Logger.WriteLine(LogType.ERROR, "Unhandled body type " + type);
+                    return;
+            }
+
+            int count = 1;
+            if (isMulti)
+            {
+                count = msg.ReadInt32();
+            }
+
+            if (isStatic)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var posX = msg.ReadFloat();
+                    var posY = msg.ReadFloat();
+                    var posZ = msg.ReadFloat();
+                    var oriX = msg.ReadFloat();
+                    var oriY = msg.ReadFloat();
+                    var oriZ = msg.ReadFloat();
+                    var oriW = msg.ReadFloat();
+
+                    var pos = new Vector3(posX, posY, posZ);
+                    var ori = new Quaternion(oriX, oriY, oriZ, oriW);
+
+                    sim.Simulation.Statics.Add(new StaticDescription(
+                        pos,
+                        ori,
+                        shapeIndex,
+                        specMargin));
+
+                    body.SetPose(pos, ori);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    ReadBody(msg, out var handle, out var pose, out var vel);
+
+                    BodyHandle myHandle = default;
+
+                    if (mass == 0)
+                    {
+                        myHandle = sim.Simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                            pose,
+                            vel,
+                            new CollidableDescription(shapeIndex, specMargin),
+                            new BodyActivityDescription(0.01f)));
+                    }
+                    else
+                    {
+                        myHandle = sim.Simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                            pose,
+                            vel,
+                            inertia,
+                            new CollidableDescription(shapeIndex, specMargin),
+                            new BodyActivityDescription(0.01f)));
+                    }
+
+                    body.SetHandle(myHandle, sim.Simulation);
+                }
+            }
+        }
+
+        void ReadBody(NetIncomingMessage msg, out int Handle, out RigidPose pose, out BodyVelocity velocity)
+        {
+            Handle = msg.ReadInt32();
+            var posX = msg.ReadFloat();
+            var posY = msg.ReadFloat();
+            var posZ = msg.ReadFloat();
+            var oriX = msg.ReadFloat();
+            var oriY = msg.ReadFloat();
+            var oriZ = msg.ReadFloat();
+            var oriW = msg.ReadFloat();
+            var velX = msg.ReadFloat();
+            var velY = msg.ReadFloat();
+            var velZ = msg.ReadFloat();
+            var aVelX = msg.ReadFloat();
+            var aVelY = msg.ReadFloat();
+            var aVelZ = msg.ReadFloat();
+
+            var pos = new Vector3(posX, posY, posZ);
+            var ori = new Quaternion(oriX, oriY, oriZ, oriW);
+            var vel = new Vector3(velX, velY, velZ);
+            var aVel = new Vector3(aVelX, aVelY, aVelZ);
+
+            pose = new RigidPose(pos, ori);
+            velocity = new BodyVelocity(vel, aVel);
         }
 
         public void OnDisconnect()
@@ -352,7 +563,115 @@ namespace cyFight
 
         public void Dispose()
         {
-            //TODO, probably never.
+            doneLoading = true;
+            if (network != null)
+            {
+                network.Dispose();
+            }
+        }
+
+        interface IBodyRenderer
+        {
+            void SetPose(Vector3 pos, Quaternion ori);
+            void SetHandle(BodyHandle handle, Simulation Simulation);
+        }
+
+        class BoxThingy : IBodyRenderer
+        {
+            List<BodyReference> bodyRefs;
+            Box_MRT box;
+            public BoxThingy(float width, float height, float length, Renderer renderer, EventManager em)
+            {
+                box = new Box_MRT(renderer, null, 0);
+                box.color = Color.DarkBlue;
+                box.scale = new Vector3(width, height, length);
+
+                em.addDrawMRT(0, DrawMRT);
+            }
+
+            public void SetPose(Vector3 pos, Quaternion ori)
+            {
+                box.position = pos;
+                box.rotation = Matrix3x3.CreateFromQuaternion(ori);
+            }
+
+            public void SetHandle(BodyHandle handle, Simulation Simulation)
+            {
+                if (bodyRefs == null)
+                {
+                    bodyRefs = new List<BodyReference>();
+                }
+                bodyRefs.Add(new BodyReference(handle, Simulation.Bodies));
+            }
+
+            void DrawMRT()
+            {
+                if (bodyRefs != null)
+                {
+                    for (int i = 0; i < bodyRefs.Count; i++)
+                    {
+                        var bodyRef = bodyRefs[i];
+                        var pose = bodyRef.Pose;
+
+                        box.position = pose.Position;
+                        box.rotation = Matrix3x3.CreateFromQuaternion(pose.Orientation);
+                        box.DrawMRT();
+                    }
+                }
+                else
+                {
+                    box.DrawMRT();
+                }
+            }
+        }
+
+        class CylinderThingy : IBodyRenderer
+        {
+            List<BodyReference> bodyRefs;
+            Cylinder_MRT cyl;
+            public CylinderThingy(float radius, float length, Renderer renderer, EventManager em)
+            {
+                cyl = new Cylinder_MRT(renderer, null, 0);
+                cyl.color = Color.DarkBlue;
+                cyl.scale = new Vector3(radius, length, radius);
+
+                em.addDrawMRT(0, DrawMRT);
+            }
+
+            public void SetPose(Vector3 pos, Quaternion ori)
+            {
+                cyl.position = pos;
+                cyl.rotation = Matrix3x3.CreateFromQuaternion(ori);
+            }
+
+            public void SetHandle(BodyHandle handle, Simulation Simulation)
+            {
+                if (bodyRefs == null)
+                {
+                    bodyRefs = new List<BodyReference>();
+                }    
+                bodyRefs.Add(new BodyReference(handle, Simulation.Bodies));
+            }
+
+            void DrawMRT()
+            {
+                if (bodyRefs != null)
+                {
+                    for (int i = 0; i < bodyRefs.Count; i++)
+                    {
+                        var bodyRef = bodyRefs[i];
+                        var pose = bodyRef.Pose;
+
+                        cyl.position = pose.Position;
+                        cyl.rotation = Matrix3x3.CreateFromQuaternion(pose.Orientation);
+                        cyl.DrawMRT();
+                    }
+                }
+                else
+                {
+                    cyl.DrawMRT();
+                }
+            }
         }
 
         class MagicBox

@@ -31,8 +31,9 @@ namespace cySim
         {
         }
 
-        public void Init()
+        public void Init(int StartFrame = 0)
         {
+            CurrentFrame = StartFrame;
             BufferPool = new BufferPool();
 
             characters = new CharacterControllers(BufferPool);
@@ -82,9 +83,11 @@ namespace cySim
         }
 
         public int PlayerCount { get { return numPlayers; } }
+        public int HighestPlayerID { get { return playerIDToPlayer.HighestPossiblyClaimedId; } }
 
         public CharacterInput GetPlayer(int playerID)
         {
+            Debug.Assert(players[playerID] != null, "Trying to access a player ID that doesn't exist");
             return players[playerID];
         }
 
@@ -97,9 +100,11 @@ namespace cySim
         {
             get
             {
-                foreach (var p in players)
+                for (int i = 0; i <= HighestPlayerID; i++)
                 {
-                    yield return p;
+                    var p = players[i];
+                    if (p != null)
+                        yield return p;
                 }
             }
         }

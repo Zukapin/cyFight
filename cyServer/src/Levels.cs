@@ -26,16 +26,7 @@ namespace cyServer
 {
     //serialization descriptions for "normal" simulation bodies
     //anything with complicated constraints or other game logic will have to be serialized separately (like characters)
-    enum BodyType : byte
-    {//serialization info for "normal" static/dynamic objects
-        MULTI = 0, //if a set with the same shape, wrote first, then followed by shape
-        BOX = 1,
-        CAPSULE = 2,
-        SPHERE = 3,
-        CYLINDER = 4,
-
-        STATIC = 128 //shape flag -- kinematic objects are sent with 0 inverse mass
-    }
+    
     interface IBodyDesc
     {
         void Serialize(NetOutgoingMessage msg, Simulation Simulation);
@@ -44,6 +35,7 @@ namespace cyServer
     struct BoxDesc : IBodyDesc
     {
         Vector3 shape;
+        float mass;
         float specMargin;
 
         bool IsStatic;
@@ -60,6 +52,7 @@ namespace cyServer
 
             count = 1;
             handles = default;
+            mass = 0;
 
             Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z)), specMargin)));
         }
@@ -73,6 +66,7 @@ namespace cyServer
 
             count = poses.Count;
             handles = default;
+            mass = 0;
 
             var shapeIndex = Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z));
             for (int i = 0; i < count; i++)
@@ -82,10 +76,11 @@ namespace cyServer
             }
         }
 
-        public BoxDesc(Vector3 shape, float specMargin, List<BodyHandle> handles)
+        public BoxDesc(Vector3 shape, float mass, float specMargin, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.shape = shape;
+            this.mass = mass;
             this.specMargin = specMargin;
             this.handles = handles;
 
@@ -125,6 +120,7 @@ namespace cyServer
                 msg.Write(shape.X);
                 msg.Write(shape.Y);
                 msg.Write(shape.Z);
+                msg.Write(mass);
                 msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
@@ -132,9 +128,6 @@ namespace cyServer
                 {
                     var handle = handles[i];
                     Network.SerializeBody(handle, Simulation, msg);
-
-                    var bodyRef = new BodyReference(handle, Simulation.Bodies);
-                    msg.Write(bodyRef.LocalInertia.InverseMass);
                 }
             }
         }
@@ -145,6 +138,7 @@ namespace cyServer
         float radius;
         float length;
         float specMargin;
+        float mass;
 
         bool IsStatic;
         int count;
@@ -161,6 +155,7 @@ namespace cyServer
 
             count = 1;
             handles = default;
+            mass = 0;
 
             Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Cylinder(radius, length)), specMargin)));
         }
@@ -175,6 +170,7 @@ namespace cyServer
 
             count = poses.Count;
             handles = default;
+            mass = 0;
 
             var shapeIndex = Simulation.Shapes.Add(new Cylinder(radius, length));
             for (int i = 0; i < count; i++)
@@ -184,11 +180,12 @@ namespace cyServer
             }
         }
 
-        public CylinderDesc(float radius, float length, float specMargin, List<BodyHandle> handles)
+        public CylinderDesc(float radius, float length, float mass, float specMargin, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.radius = radius;
             this.length = length;
+            this.mass = mass;
             this.specMargin = specMargin;
             this.handles = handles;
 
@@ -226,6 +223,7 @@ namespace cyServer
                 msg.Write((byte)BodyType.CYLINDER);
                 msg.Write(radius);
                 msg.Write(length);
+                msg.Write(mass);
                 msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
@@ -233,9 +231,6 @@ namespace cyServer
                 {
                     var handle = handles[i];
                     Network.SerializeBody(handle, Simulation, msg);
-
-                    var bodyRef = new BodyReference(handle, Simulation.Bodies);
-                    msg.Write(bodyRef.LocalInertia.InverseMass);
                 }
             }
         }
@@ -281,8 +276,9 @@ namespace cyServer
             float cylRadius = 1;
             float cylLength = 1;
             float cylSpecMargin = 0.1f;
+            float cylMass = 1;
             var cylShape = new Cylinder(cylRadius, cylLength);
-            cylShape.ComputeInertia(1f, out var cylInertia);
+            cylShape.ComputeInertia(cylMass, out var cylInertia);
             var cylIndex = Simulation.Shapes.Add(cylShape);
 
             const int pyramidCount = 1;
@@ -309,22 +305,24 @@ namespace cyServer
                 }
             }
 
-            bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylSpecMargin, cylinders));
+            bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylMass, cylSpecMargin, cylinders));
         }
 
         void SerializeAll(NetOutgoingMessage msg)
         {
             msg.Write(sim.CurrentFrame);
 
+            msg.Write(bodyDesc.Count);
             foreach (var b in bodyDesc)
             {
                 b.Serialize(msg, Simulation);
             }
 
             msg.Write(sim.PlayerCount);
-            for (int i = 0; i < sim.PlayerCount; i++)
+            for (int i = 0; i <= sim.HighestPlayerID; i++)
             {
-                Network.SerializePlayer(i, sim, msg);
+                if (sim.PlayerExists(i))
+                    Network.SerializePlayer(i, sim, msg);
             }
         }
 
@@ -342,14 +340,17 @@ namespace cyServer
             SerializeAll(msgToNewPlayer);
             Network.Send(msgToNewPlayer, conn, NetDeliveryMethod.ReliableOrdered, 0);
 
-            var msgToOtherPlayers = Network.CreateMessage();
-            msgToOtherPlayers.Write((int)NetServerToClient.NEW_PLAYER);
-            msgToOtherPlayers.Write(sim.CurrentFrame);
-            msgToOtherPlayers.Write(playerID);
-            msgToOtherPlayers.Write(startPos.X);
-            msgToOtherPlayers.Write(startPos.Y);
-            msgToOtherPlayers.Write(startPos.Z);
-            Network.Send(msgToOtherPlayers, connections, NetDeliveryMethod.ReliableOrdered, 0);
+            if (connections.Count > 0)
+            {
+                var msgToOtherPlayers = Network.CreateMessage();
+                msgToOtherPlayers.Write((int)NetServerToClient.NEW_PLAYER);
+                msgToOtherPlayers.Write(sim.CurrentFrame);
+                msgToOtherPlayers.Write(playerID);
+                msgToOtherPlayers.Write(startPos.X);
+                msgToOtherPlayers.Write(startPos.Y);
+                msgToOtherPlayers.Write(startPos.Z);
+                Network.Send(msgToOtherPlayers, connections, NetDeliveryMethod.ReliableOrdered, 0);
+            }
 
             connections.Add(conn);
         }
@@ -406,11 +407,14 @@ namespace cyServer
             connections.Remove(conn);
             sim.RemovePlayer(playerID.Value);
 
-            var msg = Network.CreateMessage();
-            msg.Write((int)NetServerToClient.REMOVE_PLAYER);
-            msg.Write(sim.CurrentFrame);
-            msg.Write(playerID.Value);
-            Network.Send(msg, connections, NetDeliveryMethod.ReliableOrdered, 0);
+            if (connections.Count > 0)
+            {
+                var msg = Network.CreateMessage();
+                msg.Write((int)NetServerToClient.REMOVE_PLAYER);
+                msg.Write(sim.CurrentFrame);
+                msg.Write(playerID.Value);
+                Network.Send(msg, connections, NetDeliveryMethod.ReliableOrdered, 0);
+            }
         }
 
         public override void Update(float dt)
@@ -423,22 +427,28 @@ namespace cyServer
         public void SendUpdateMessages()
         {
             //doing a very dumb 'send everything to everyone' plan
-            var msg = Network.CreateMessage();
-            msg.Write((int)NetServerToClient.STATE_UPDATE);
-            msg.Write(sim.CurrentFrame);
-            msg.Write(sim.PlayerCount);
-            for (int i = 0; i < sim.PlayerCount; i++)
+            if (connections.Count > 0)
             {
-                Network.SerializePlayer(i, sim, msg);
+                var msg = Network.CreateMessage();
+                msg.Write((int)NetServerToClient.STATE_UPDATE);
+                msg.Write(sim.CurrentFrame);
+                msg.Write(sim.PlayerCount);
+                for (int i = 0; i <= sim.HighestPlayerID; i++)
+                {
+                    if (sim.PlayerExists(i))
+                    {
+                        Network.SerializePlayer(i, sim, msg);
+                    }
+                }
+                msg.Write(dynBodies.Count);
+                for (int i = 0; i < dynBodies.Count; i++)
+                {
+                    Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
+                }
+                //note: can check individual connection MTU with conn.CurrentMTU, but it will essentially always be 1500 so whatever
+                Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
+                Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);
             }
-            msg.Write(dynBodies.Count);
-            for (int i = 0; i < dynBodies.Count; i++)
-            {
-                Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
-            }
-            //note: can check individual connection MTU with conn.CurrentMTU, but it will essentially always be 1500 so whatever
-            Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
-            Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);
         }
     }
 }

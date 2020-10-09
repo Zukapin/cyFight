@@ -26,7 +26,7 @@ namespace cyFight
 
         bool tryConnect = false;
         int connectIndex = 0;
-        static string[] hostnames = new string[] { "70.59.22.131", "192.168.0.11", "127.0.0.1" };
+        static string[] hostnames = new string[] { "127.0.0.1", "70.59.22.131", "192.168.0.11", "127.0.0.1" };
 
         const int port = 6114;
 
@@ -168,6 +168,19 @@ namespace cyFight
                         break;
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            //this ends this network forever
+            //further calls to network will go poorly
+            if (client.ConnectionStatus != NetConnectionStatus.Disconnected)
+                client.Disconnect("Client weird shutdown"); //sometimes this message is actually used
+            client.Shutdown("Client shutdown"); //mostly its this one
+            //we have the thread.sleep here to help it actually send the disconnects to the remote peer
+            //remote may *still* not get it, with latency and if the packet drops or something
+            //but, well, should only really happen, in a finished game, during alt-f4 or hardcrash, and we're not waiting around to find out
+            System.Threading.Thread.Sleep(50);
         }
     }
 }

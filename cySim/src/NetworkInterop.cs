@@ -23,6 +23,18 @@ namespace cySim
         PLAYER_INPUT = 0
     }
 
+    //physics bodytype serialization byte
+    public enum BodyType : byte
+    {//serialization info for "normal" static/dynamic objects
+        MULTI = 0, //if a set with the same shape, wrote first, then followed by shape
+        BOX = 1,
+        CAPSULE = 2,
+        SPHERE = 3,
+        CYLINDER = 4,
+
+        STATIC = 128 //shape flag -- kinematic objects are sent with 0 inverse mass
+    }
+
     public abstract class NetInterop
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
