@@ -183,30 +183,7 @@ namespace cyFight
         }
     }
 
-    class NetworkCallbacks : INetworkCallbacks
-    {
-        public void OnConnect()
-        {
-            Logger.WriteLine(LogType.DEBUG, "Connected callback");
-        }
-
-        public void OnConnectionFailed()
-        {
-            Logger.WriteLine(LogType.DEBUG, "Connection failed callback");
-        }
-
-        public void OnData(NetIncomingMessage msg)
-        {
-            Logger.WriteLine(LogType.DEBUG, "Data callback");
-        }
-
-        public void OnDisconnect()
-        {
-            Logger.WriteLine(LogType.DEBUG, "Disconect callback");
-        }
-    }
-
-    class TestScene : IScene
+    class TestScene : IScene, INetworkCallbacks
     {
         TPVCamera cam;
 
@@ -215,7 +192,6 @@ namespace cyFight
 
         CySim sim;
         Network network;
-        NetworkCallbacks networkCallbacks;
 
         public TestScene(GameStage stage)
         {
@@ -224,9 +200,6 @@ namespace cyFight
 
             cam = new TPVCamera(stage.renderer.ResolutionWidth / (float)stage.renderer.ResolutionHeight, Vector3.Zero, Vector3.One, 0, 0);
             cam.Offset = new Vector3(0, 0.5f * 1.2f, (0.75f) * 7f);
-
-            sim = new CySim();
-            networkCallbacks = new NetworkCallbacks();
         }
 
         public float LoadTime()
@@ -256,17 +229,35 @@ namespace cyFight
             };
         }
 
+        FontRenderer loadFont;
+        string loadText = "Initial Loading...";
+        bool loadTextChanged = false;
         public void Preload(EventManager em)
         {
             Texture t_duck = renderer.Assets.GetTexture(Assets.TEX_DUCK);
             var testQuad = new TexturedQuad_2D(renderer, em, 0, t_duck);
             testQuad.position = new Vector2(10, 10);
-            testQuad.scale = new Vector2(1000, 1000);
+            testQuad.scale = new Vector2(500, 500);
+
+            loadFont = new FontRenderer(renderer, em, 0, renderer.Assets.GetFont(Renderer.DefaultAssets.FONT_DEFAULT));
+            loadFont.color = Color.White;
+            loadFont.text = loadText;
+            loadFont.pos = new Vector2(renderer.ResolutionWidth * 0.5f, renderer.ResolutionHeight * 0.5f);
+            loadFont.anchor = FontAnchor.CENTER_CENTER;
         }
 
         public void LoadUpdate(float dt)
         {
-
+            /*
+            if (loadTextChanged)
+            {
+                lock (loadFont)
+                {
+                    loadFont.text = loadText;
+                    loadTextChanged = false;
+                }
+            }
+            */
         }
 
         public void LoadEnd()
@@ -280,33 +271,65 @@ namespace cyFight
 
         public void Load(EventManager em)
         {
-            sim.Load(out var BodyHandles);
+            sim = new CySim();
+            network = new Network(this);
+            network.Connect();
 
-            foreach (var h in BodyHandles)
-            {
-                new MagicBox(sim.Simulation, renderer, em, h);
-            }
-
-            //var b = sim.Simulation.Bodies.Add(BodyDescription.CreateConvexKinematic(new RigidPose(new Vector3(0, 1, 30), Quaternion.Identity), sim.Simulation.Shapes, new Box(2, 2, 2)));
-
-            var t = new Box_MRT(renderer, em, 0);
-            t.color = Color.Yellow;
-            t.position = new Vector3(0, 0.5f, 30);
-            t.rotation = Matrix3x3.Identity;
-            t.scale = new Vector3(2, 1f, 2);
-
-            //add lights
             Vector3 lightDir = Vector3.Normalize(new Vector3(0.25f, -1, -0.5f));
             var l = new DirectionalLight(renderer, em, lightDir, Color.White, 1);
-            //l = new DirectionalLight(renderer, em, Vector3.UnitY, Color.White, 0.1f);
-
-            var player = new MyPlayer(stage, renderer, em, cam, sim, new Vector3(0, 1, 20));
-            new Player(sim, renderer, em, new Vector3(0, 1, 25));
 
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
 
-            network = new Network(networkCallbacks);
-            network.Connect();
+
+            while (true)
+            {
+                network.ReadMessages();
+
+                if (!network.IsConnected)
+                {
+                    lock (loadFont)
+                    {
+                        loadText = "Attempting to connect to " + network.CurrentConnectionTarget;
+                        loadTextChanged = true;
+                    }
+                }
+
+                network.SendMessages();
+                //this sleeps for way longer than 1 ms on average, because windows, but whatever
+                Thread.Sleep(1);
+            }
+        }
+
+        public void OnConnect()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Connected callback");
+
+            lock (loadFont)
+            {
+                loadText = "Connected, waiting on data from server";
+                loadTextChanged = true;
+            }
+        }
+
+        public void OnConnectionFailed()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Connection failed callback");
+
+            lock (loadFont)
+            {
+                loadText = "Connected, waiting on data from server";
+                loadTextChanged = true;
+            }
+        }
+
+        public void OnData(NetIncomingMessage msg)
+        {
+            Logger.WriteLine(LogType.DEBUG, "Data callback");
+        }
+
+        public void OnDisconnect()
+        {
+            Logger.WriteLine(LogType.DEBUG, "Disconect callback");
         }
 
         public void Update(float dt)

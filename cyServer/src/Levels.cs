@@ -436,7 +436,8 @@ namespace cyServer
             {
                 Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
             }
-            Debug.Assert(msg.LengthBytes <= Network.MTU, "Player state update is larger than network MTU");
+            //note: can check individual connection MTU with conn.CurrentMTU, but it will essentially always be 1500 so whatever
+            Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
             Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);
         }
     }

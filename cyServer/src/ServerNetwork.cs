@@ -72,14 +72,6 @@ namespace cyServer
             serv.SendMessage(msg, conn, method, sequence);
         }
 
-        public int MTU
-        {
-            get
-            {
-                return 1500;
-            }
-        }
-
         void OnConnect(NetConnection conn)
         {
             CurLevel.OnConnect(conn);

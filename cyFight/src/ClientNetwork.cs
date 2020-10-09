@@ -63,6 +63,24 @@ namespace cyFight
             client.Start(); //this sleeps for 50ms >.>
         }
 
+        public string CurrentConnectionTarget
+        {
+            get
+            {
+                if (tryConnect)
+                    return hostnames[connectIndex - 1];
+                return "Not Connecting";
+            }
+        }
+
+        public bool IsConnected
+        {
+            get
+            {
+                return client.ConnectionStatus == NetConnectionStatus.Connected;
+            }
+        }
+
         public void Connect()
         {
             var status = client.ConnectionStatus;
