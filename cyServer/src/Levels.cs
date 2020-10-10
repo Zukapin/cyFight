@@ -328,7 +328,7 @@ namespace cyServer
 
         public override void OnConnect(NetConnection conn)
         {
-            Vector3 startPos = new Vector3(0, 10, 20);
+            Vector3 startPos = new Vector3(0, 1, 20);
             var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(Random.NextDouble() * Math.PI * 2));
             startPos = QuaternionEx.Transform(startPos, rot);
             var playerID = sim.AddPlayer(startPos);

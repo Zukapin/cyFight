@@ -47,16 +47,14 @@ namespace cyFight
     {
         CySim sim;
         public int playerIndex;
-        public ref PlayerInput input { get { return ref sim.GetPlayer(playerIndex).Input; } }
 
         protected Capsule_MRT charGraphics;
         protected Cylinder_MRT hamGraphics;
 
-        public Player(CySim sim, Renderer renderer, EventManager em, Vector3 startPos)
+        public Player(CySim sim, Renderer renderer, EventManager em, int playerID)
         {
             this.sim = sim;
-
-            playerIndex = sim.AddPlayer(startPos);
+            this.playerIndex = playerID;
 
             charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
 
@@ -89,12 +87,18 @@ namespace cyFight
         TPVCamera cam;
         GameStage stage;
 
+        PlayerInput input;
 
-        public MyPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam, CySim sim, Vector3 startPos)
-            : base(sim, renderer, em, startPos)
+        public ref PlayerInput Input { get { return ref input; } }
+
+
+        public MyPlayer(GameStage stage, Renderer renderer, EventManager em, TPVCamera cam, CySim sim, int playerID)
+            : base(sim, renderer, em, playerID)
         {
             this.stage = stage;
             this.cam = cam;
+
+            input = default;
 
             em.addUpdateListener(0, Update);
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.FORWARD, OnMoveForward);
@@ -128,8 +132,7 @@ namespace cyFight
 
         bool OnJump(ActionEventArgs args)
         {
-            if (args.buttonDown)
-                input.TryJump = true;
+            input.TryJump = args.buttonDown;
             return true;
         }
 
@@ -170,10 +173,7 @@ namespace cyFight
 
         bool OnFire(ActionEventArgs args)
         {
-            if (args.buttonDown)
-            {
-                input.TryFire = true;
-            }
+            input.TryFire = args.buttonDown;
             return true;
         }
 
@@ -194,6 +194,11 @@ namespace cyFight
         CySim sim;
         Network network;
 
+        MyPlayer myPlayer;
+        List<Player> players;
+        BodyHandle[] ServerHandleToLocal;
+        int[] ServerPlayerToLocal;
+
         public TestScene(GameStage stage)
         {
             this.stage = stage;
@@ -201,6 +206,26 @@ namespace cyFight
 
             cam = new TPVCamera(stage.renderer.ResolutionWidth / (float)stage.renderer.ResolutionHeight, Vector3.Zero, Vector3.One, 0, 0);
             cam.Offset = new Vector3(0, 0.5f * 1.2f, (0.75f) * 7f);
+
+            ServerHandleToLocal = new BodyHandle[1024];
+            ServerPlayerToLocal = new int[128];
+            players = new List<Player>();
+        }
+
+        void EnsureHandleCapacity(int capacity)
+        {
+            if (ServerHandleToLocal.Length >= capacity)
+                return;
+
+            Array.Resize(ref ServerHandleToLocal, capacity);
+        }
+
+        void EnsurePlayerCapacity(int capacity)
+        {
+            if (ServerPlayerToLocal.Length >= capacity)
+                return;
+
+            Array.Resize(ref ServerPlayerToLocal, capacity);
         }
 
         public float LoadTime()
@@ -358,15 +383,110 @@ namespace cyFight
                         loadTextChanged = true;
                     }
                     OnLevelData(msg);
+                    lock (loadFont)
+                    {
+                        loadText = "Simulation initialized";
+                        loadTextChanged = true;
+                    }
+                    doneLoading = true;
                     break;
                 case NetServerToClient.REMOVE_PLAYER:
                     Logger.WriteLine(LogType.DEBUG, "Player removed");
                     break;
                 case NetServerToClient.STATE_UPDATE:
+                    OnStateUpdate(msg);
                     break;
                 default:
                     Logger.WriteLine(LogType.POSSIBLE_ERROR, "Unhandled message type from server " + msgID);
                     break;
+            }
+        }
+
+        struct PlayerState
+        {
+            public int playerID;
+            public BodyState player;
+            public BodyState hammer;
+            public HammerState hammerState;
+            public float hammerDT;
+            public PlayerInput input;
+
+            public PlayerState(int playerID, BodyState player, BodyState hammer, HammerState hammerState, float hammerDT,
+                PlayerInput input)
+            {
+                this.playerID = playerID;
+                this.player = player;
+                this.hammer = hammer;
+                this.hammerState = hammerState;
+                this.hammerDT = hammerDT;
+                this.input = input;
+            }
+        }
+
+        struct BodyState
+        {
+            public int bodyHandle;
+            public RigidPose pose;
+            public BodyVelocity velocity;
+
+            public BodyState(int handle, Vector3 pos, Quaternion ori, Vector3 linVel, Vector3 angVel)
+            {
+                this.bodyHandle = handle;
+                pose = new RigidPose(pos, ori);
+                velocity = new BodyVelocity(linVel, angVel);
+            }
+        }
+
+        struct SimState
+        {
+            public int Frame;
+            public int numPlayers;
+            public PlayerState[] playerStates;
+            public int numBodies;
+            public BodyState[] bodyStates;
+        }
+
+        void OnStateUpdate(NetIncomingMessage msg)
+        {
+            SimState state = default;
+            state.Frame = msg.ReadInt32();
+            state.numPlayers = msg.ReadInt32();
+            state.playerStates = new PlayerState[state.numPlayers];
+            for (int i = 0; i < state.numPlayers; i++)
+            {
+                ReadPlayer(msg, ref state.playerStates[i]);
+            }
+            state.numBodies = msg.ReadInt32();
+            state.bodyStates = new BodyState[state.numBodies];
+            for (int i = 0; i < state.numBodies; i++)
+            {
+                ReadBody(msg, ref state.bodyStates[i]);
+            }
+
+            ApplyState(ref state);
+        }
+
+        void ApplyState(ref SimState state)
+        {
+            for (int i = 0; i < state.numPlayers; i++)
+            {
+                ref var pState = ref state.playerStates[i];
+                var pID = ServerPlayerToLocal[pState.playerID];
+                var p = sim.GetPlayer(pID);
+                p.SetState(ref pState.player.pose, ref pState.player.velocity,
+                    ref pState.hammer.pose, ref pState.hammer.velocity,
+                    pState.hammerState, pState.hammerDT);
+                p.Input = pState.input;
+            }
+
+            for (int i = 0; i < state.numBodies; i++)
+            {
+                ref var bState = ref state.bodyStates[i];
+                var bID = ServerHandleToLocal[bState.bodyHandle];
+
+                var bodyRef = new BodyReference(bID, sim.Simulation.Bodies);
+                bodyRef.Pose = bState.pose;
+                bodyRef.Velocity = bState.velocity;
             }
         }
 
@@ -381,6 +501,52 @@ namespace cyFight
             {
                 OnBodyData(msg);
             }
+
+            var playerCount = msg.ReadInt32();
+            for (int i = 0; i < playerCount; i++)
+            {
+                OnPlayerData(msg, myPlayerID);
+            }
+        }
+
+        void OnPlayerData(NetIncomingMessage msg, int playerID)
+        {
+            PlayerState playerState = default;
+            ReadPlayer(msg, ref playerState);
+
+            var localID = sim.AddPlayer(playerState.player.pose.Position);
+
+            EnsurePlayerCapacity(playerState.playerID);
+            ServerPlayerToLocal[playerState.playerID] = localID;
+
+            var p = sim.GetPlayer(localID);
+            p.SetState(ref playerState.player.pose, ref playerState.player.velocity,
+                ref playerState.hammer.pose, ref playerState.hammer.velocity,
+                playerState.hammerState, playerState.hammerDT);
+            p.Input = playerState.input;
+
+            if (playerState.playerID == playerID)
+            {
+                myPlayer = new MyPlayer(stage, renderer, load_em, cam, sim, localID);
+                players.Add(myPlayer);
+            }
+            else
+            {
+                players.Add(new Player(sim, renderer, load_em, localID));
+            }
+        }
+
+        void ReadPlayer(NetIncomingMessage msg, ref PlayerState state)
+        {
+            state.playerID = msg.ReadInt32();
+
+            ReadBody(msg, ref state.player);
+            ReadBody(msg, ref state.hammer);
+
+            state.hammerState = (HammerState)msg.ReadByte();
+            state.hammerDT = msg.ReadFloat();
+
+            NetInterop.ReadPlayerInput(ref state.input, msg);
         }
 
         void OnBodyData(NetIncomingMessage msg)
@@ -485,36 +651,39 @@ namespace cyFight
             {
                 for (int i = 0; i < count; i++)
                 {
-                    ReadBody(msg, out var handle, out var pose, out var vel);
+                    BodyState bodyState = default;
+                    ReadBody(msg, ref bodyState);
 
                     BodyHandle myHandle = default;
-
                     if (mass == 0)
                     {
                         myHandle = sim.Simulation.Bodies.Add(BodyDescription.CreateKinematic(
-                            pose,
-                            vel,
+                            bodyState.pose,
+                            bodyState.velocity,
                             new CollidableDescription(shapeIndex, specMargin),
                             new BodyActivityDescription(0.01f)));
                     }
                     else
                     {
                         myHandle = sim.Simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                            pose,
-                            vel,
+                            bodyState.pose,
+                            bodyState.velocity,
                             inertia,
                             new CollidableDescription(shapeIndex, specMargin),
                             new BodyActivityDescription(0.01f)));
                     }
 
                     body.SetHandle(myHandle, sim.Simulation);
+
+                    EnsureHandleCapacity(bodyState.bodyHandle);
+                    ServerHandleToLocal[bodyState.bodyHandle] = myHandle;
                 }
             }
         }
 
-        void ReadBody(NetIncomingMessage msg, out int Handle, out RigidPose pose, out BodyVelocity velocity)
+        void ReadBody(NetIncomingMessage msg, ref BodyState state)
         {
-            Handle = msg.ReadInt32();
+            var handle = msg.ReadInt32();
             var posX = msg.ReadFloat();
             var posY = msg.ReadFloat();
             var posZ = msg.ReadFloat();
@@ -529,25 +698,32 @@ namespace cyFight
             var aVelY = msg.ReadFloat();
             var aVelZ = msg.ReadFloat();
 
-            var pos = new Vector3(posX, posY, posZ);
-            var ori = new Quaternion(oriX, oriY, oriZ, oriW);
-            var vel = new Vector3(velX, velY, velZ);
-            var aVel = new Vector3(aVelX, aVelY, aVelZ);
-
-            pose = new RigidPose(pos, ori);
-            velocity = new BodyVelocity(vel, aVel);
+            state = new BodyState(handle, 
+                new Vector3(posX, posY, posZ),
+                new Quaternion(oriX, oriY, oriZ, oriW),
+                new Vector3(velX, velY, velZ),
+                new Vector3(aVelX, aVelY, aVelZ));
         }
 
         public void OnDisconnect()
         {
-            Logger.WriteLine(LogType.DEBUG, "Disconect callback");
+            Logger.WriteLine(LogType.DEBUG, "Disconnect callback");
         }
 
         public void Update(float dt)
         {
             network.ReadMessages();
+            SendInput();
             network.SendMessages();
             sim.Update(dt);
+        }
+
+        void SendInput()
+        {
+            var msg = network.CreateMessage();
+            msg.Write((int)NetClientToServer.PLAYER_INPUT);
+            NetInterop.SerializePlayerInput(ref myPlayer.Input, msg);
+            network.SendMessage(msg, NetDeliveryMethod.Unreliable, 0);
         }
 
         public ICamera GetCamera()
@@ -583,7 +759,7 @@ namespace cyFight
             public BoxThingy(float width, float height, float length, Renderer renderer, EventManager em)
             {
                 box = new Box_MRT(renderer, null, 0);
-                box.color = Color.DarkBlue;
+                box.color = Color.DarkSlateGray;
                 box.scale = new Vector3(width, height, length);
 
                 em.addDrawMRT(0, DrawMRT);
@@ -632,7 +808,7 @@ namespace cyFight
             public CylinderThingy(float radius, float length, Renderer renderer, EventManager em)
             {
                 cyl = new Cylinder_MRT(renderer, null, 0);
-                cyl.color = Color.DarkBlue;
+                cyl.color = Color.DarkRed;
                 cyl.scale = new Vector3(radius, length, radius);
 
                 em.addDrawMRT(0, DrawMRT);

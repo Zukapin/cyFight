@@ -81,6 +81,16 @@ namespace cyFight
             }
         }
 
+        public NetOutgoingMessage CreateMessage()
+        {
+            return client.CreateMessage();
+        }
+
+        public void SendMessage(NetOutgoingMessage msg, NetDeliveryMethod deliveryMethod, int sequence)
+        {
+            client.SendMessage(msg, deliveryMethod, sequence);
+        }
+
         public void Connect()
         {
             var status = client.ConnectionStatus;

@@ -149,6 +149,20 @@ namespace cySim
             input.ViewDirection = -Vector3.UnitZ;
         }
 
+        public void SetState(ref RigidPose playerPose, ref BodyVelocity playerVel, ref RigidPose hammerPose, ref BodyVelocity hammerVel, HammerState hammerState, float hammerDT)
+        {
+            var playerRef = new BodyReference(bodyHandle, characters.Simulation.Bodies);
+            playerRef.Pose = playerPose;
+            playerRef.Velocity = playerVel;
+
+            var hammerRef = new BodyReference(hamHandle, characters.Simulation.Bodies);
+            hammerRef.Pose = hammerPose;
+            hammerRef.Velocity = hammerVel;
+
+            ref var ham = ref Hammer;
+            ham.HammerState = hammerState;
+            ham.HammerDT = hammerDT;
+        }
 
         public void UpdateCharacterGoals(float dt)
         {
