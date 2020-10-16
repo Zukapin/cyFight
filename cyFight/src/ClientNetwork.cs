@@ -79,9 +79,9 @@ namespace cyFight
             {
                 if (client.ServerConnection == null)
                     return "";
+                var now = NetTime.Now;
                 return client.Statistics.ToString()
-                    + "Roundtrip Time: " + (client.ServerConnection.AverageRoundtripTime * 1000) + " ms"
-                    + "\nRemote Time: " + client.ServerConnection.RemoteTimeOffset;
+                    + "Roundtrip Time: " + (client.ServerConnection.AverageRoundtripTime * 1000) + " ms";
             }
         }
 

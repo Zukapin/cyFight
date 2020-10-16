@@ -454,7 +454,7 @@ namespace cyFight
         int JitterReadIndex = 0;
         int JitterWriteIndex = 0;
         int JitterCount = 0;
-        SimState[] JitterBuffer = new SimState[10];
+        SimState[] JitterBuffer = new SimState[100];
         void OnStateUpdate(NetIncomingMessage msg)
         {
             if (JitterCount == JitterBuffer.Length)
@@ -715,7 +715,7 @@ namespace cyFight
             var aVelY = msg.ReadFloat();
             var aVelZ = msg.ReadFloat();
 
-            state = new BodyState(handle, 
+            state = new BodyState(handle,
                 new Vector3(posX, posY, posZ),
                 new Quaternion(oriX, oriY, oriZ, oriW),
                 new Vector3(velX, velY, velZ),
@@ -738,16 +738,65 @@ namespace cyFight
         FontRenderer debugText;
         void UpdateSim(float dt)
         {
-            debugText.text = "Num states: " + JitterCount + "\n" + "Local current frame: " + sim.CurrentFrame + "\n" + "Jitter buffer frame: " + JitterBuffer[JitterReadIndex].Frame
-                + "\n" + "Diff: " + (JitterBuffer[JitterReadIndex].Frame - sim.CurrentFrame)
-                + "\n" + "Net: " + network.NetworkStats;
-            if (JitterCount != 0)
+            int LastWrite = JitterWriteIndex - 1;
+            if (LastWrite == -1)
+                LastWrite = JitterBuffer.Length - 1;
+
+            debugText.text =
+                "Num frames buffered: " + JitterCount
+                + "\nLocal current frame: " + sim.CurrentFrame
+                + "\nFrame diff to next state available: " + (JitterBuffer[JitterReadIndex].Frame - sim.CurrentFrame)
+                + "\nFrame diff to latest state recieved: " + (JitterBuffer[LastWrite].Frame - sim.CurrentFrame)
+                + "\n" + network.NetworkStats;
+
+            //decide here how much to update
+            //we want, over the last time period, to have a frame available some % of the time -- not counting dropped packets
+            //the sliding window timeframe lets us adjust the jitter buffer size if network conditions change
+            //window needs to be long enough to have reasonable stats, short enough to respond to shifting network conditions
+            //we don't expect 'network conditions' to change very much, or care to respond to 1-2s blips
+            int goalMinBuffer = 1; //should probably always be 1 -- if our last frame is from behind us we need to chill
+            int goalMaxBuffer = 2; //needs to be calculated dynamically based on historical samples
+
+            //if we don't have any jitter buffer we're not sure how far we off from the goal, so we just keep simming until something happens
+            int LastFrameDiff = JitterBuffer[LastWrite].Frame - sim.CurrentFrame;
+            if (JitterCount != 0 && LastFrameDiff < goalMinBuffer)
+                return;
+            if (JitterCount != 0 && LastFrameDiff > goalMaxBuffer)
+            {//we have some choices here
+                //right now it just runs an 'extra' simulation update, which it'll keep doing til it catches up
+                //other options include just setting our simFrame higher -- it'll "jump" everything forward and take a second to resync with the server
+                //or doing more than 1 extra timestep here
+                TimestepSim(dt);
+            }
+
+            TimestepSim(dt);
+        }
+
+        void TimestepSim(float dt)
+        {
+            while (JitterCount != 0)
             {
-                ref var state = ref JitterBuffer[JitterReadIndex++];
-                ApplyState(ref state);
-                if (JitterReadIndex == JitterBuffer.Length)
-                    JitterReadIndex = 0;
-                JitterCount--;
+                ref var state = ref JitterBuffer[JitterReadIndex];
+                if (state.Frame == sim.CurrentFrame)
+                {
+                    ApplyState(ref state);
+                    JitterCount--;
+                    JitterReadIndex++;
+                    if (JitterReadIndex == JitterBuffer.Length)
+                        JitterReadIndex = 0;
+                    break;
+                }
+                else if (state.Frame < sim.CurrentFrame)
+                {
+                    JitterCount--;
+                    JitterReadIndex++;
+                    if (JitterReadIndex == JitterBuffer.Length)
+                        JitterReadIndex = 0;
+                }
+                else //state fame is higher than our current frame
+                {
+                    break;
+                }
             }
             sim.Update(dt);
         }
