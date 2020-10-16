@@ -11,4 +11,15 @@
 		Can maybe just remove the distance constraint and normal position constraint and make it a ballsocketmotor, linear velocity forward, but would have to counteract gravity as well probably
 
 NETWORK STUFF
-	Get Lidgren working yay
+	Jitter Buffer
+		- Server running as close as possible to 60 ups, but may not always meet that
+		- Client needs to have a buffer roughly equal to the network jitter -- as the server is not necessarily pure 60fps, it should be last packet time - current time in the buffer
+			- have to trust the network thread for jitter timing
+				- may need to edit or move away from lidgren
+			- adjust current delay to goal jitter delay over time, or with a hard jump if sufficiently out of whack
+	Client Interpolation
+		- Server running at 60 ups, or whatever it feels like, client can be running at any fps, so we need interpolation between server states
+		- Can run the actual physics simulation, but it can get a little weird with timings, as we can only update when the server/client update times match
+			- Running at 61 fps is?? Updates would only match exactly once per second
+		- Can do pure graphical interpolation, but linear interpolation between pos/ori does not necessarily make sense
+			- Some weird side cases where client is ~60 fps but gets 'stuck' at half a frame off so none of the rendering is actually a 'real' frame

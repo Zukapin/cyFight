@@ -311,6 +311,11 @@ namespace cyFight
             Vector3 lightDir = Vector3.Normalize(new Vector3(0.25f, -1, -0.5f));
             var l = new DirectionalLight(renderer, em, lightDir, Color.White, 1);
 
+            debugText = new FontRenderer(renderer, em, 0, renderer.Assets.GetFont(Renderer.DefaultAssets.FONT_DEFAULT));
+            debugText.anchor = FontAnchor.TOP_LEFT;
+            debugText.pos = new Vector2(20, 20);
+            debugText.text = "TEST LINE 1\nTEST LINE 2\nTEST LINE 3";
+
             em.addEventHandler((int)InterfacePriority.MEDIUM, ActionTypes.ESCAPE, OnExit);
 
 
@@ -446,9 +451,23 @@ namespace cyFight
             public BodyState[] bodyStates;
         }
 
+        int JitterReadIndex = 0;
+        int JitterWriteIndex = 0;
+        int JitterCount = 0;
+        SimState[] JitterBuffer = new SimState[10];
         void OnStateUpdate(NetIncomingMessage msg)
         {
-            SimState state = default;
+            if (JitterCount == JitterBuffer.Length)
+            {
+                //don't necessarily wan't to immediately resize here -- in cases where clients computer hangs for a bit this will easily happen
+                //but doesn't represent the actual running expectations
+                Logger.WriteLine(LogType.DEBUG, "Jitter Buffer not large enough to store next state");
+                return;
+            }
+            ref SimState state = ref JitterBuffer[JitterWriteIndex++];
+            JitterCount++;
+            if (JitterWriteIndex == JitterBuffer.Length)
+                JitterWriteIndex = 0;
             state.Frame = msg.ReadInt32();
             state.numPlayers = msg.ReadInt32();
             state.playerStates = new PlayerState[state.numPlayers];
@@ -462,8 +481,6 @@ namespace cyFight
             {
                 ReadBody(msg, ref state.bodyStates[i]);
             }
-
-            ApplyState(ref state);
         }
 
         void ApplyState(ref SimState state)
@@ -715,6 +732,23 @@ namespace cyFight
             network.ReadMessages();
             SendInput();
             network.SendMessages();
+            UpdateSim(dt);
+        }
+
+        FontRenderer debugText;
+        void UpdateSim(float dt)
+        {
+            debugText.text = "Num states: " + JitterCount + "\n" + "Local current frame: " + sim.CurrentFrame + "\n" + "Jitter buffer frame: " + JitterBuffer[JitterReadIndex].Frame
+                + "\n" + "Diff: " + (JitterBuffer[JitterReadIndex].Frame - sim.CurrentFrame)
+                + "\n" + "Net: " + network.NetworkStats;
+            if (JitterCount != 0)
+            {
+                ref var state = ref JitterBuffer[JitterReadIndex++];
+                ApplyState(ref state);
+                if (JitterReadIndex == JitterBuffer.Length)
+                    JitterReadIndex = 0;
+                JitterCount--;
+            }
             sim.Update(dt);
         }
 

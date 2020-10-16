@@ -127,7 +127,7 @@ namespace cySim
             bodyAngularHandle = characters.Simulation.Solver.Add(bodyHandle, characters.FakeKinematic, Constraints_CHAR_STANDING);
             bodyLookAtHandle = characters.Simulation.Solver.Add(BodyHandle, Constraints_CHAR_LOOKAT);
 
-            input = new PlayerInput();
+            input = default;
 
             var cylShape = new Cylinder(0.25f, 0.5f);
             cylShape.ComputeInertia(0.25f, out var cylInertia);
@@ -296,45 +296,6 @@ namespace cySim
                 characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_SMASH);
                 characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, ref Constraints_ANGULAR_SMASH);
             }
-
-            /*
-            if (fire)
-            {
-                if (foundHit)
-                {
-                    var hitRef = new BodyReference(hamHit, Simulation.Bodies);
-                    var offset = hitRef.Pose.Position - p.Position;
-                    var offLen = offset.Length();
-                    var hamVel = hamRef.Velocity;
-                    var velLen = hamVel.Linear.Length();
-
-                    hitRef.ApplyImpulse(offset / offLen * velLen * 5, -offset);
-
-                    bsDesc.ServoSettings = new ServoSettings(2f, 1f, 15f);
-                    bsDesc.LocalOffsetA = Vector3.UnitX * 1.5f;
-                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
-                    foundHit = false;
-                    fire = false;
-                }
-                else
-                {
-                    float fireSpeed = 6;
-                    var rot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, fireDt * fireSpeed);
-                    QuaternionEx.Transform(Vector3.UnitX * 2f, rot, out bsDesc.LocalOffsetA);
-                    bsDesc.ServoSettings = new ServoSettings(10, 5, 10);
-                    Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
-                    fireDt += dt;
-
-                    if (fireDt > 0.4f)
-                    {
-                        bsDesc.ServoSettings = new ServoSettings(2f, 1f, 15f);
-                        bsDesc.LocalOffsetA = Vector3.UnitX * 1.5f;
-                        Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref bsDesc);
-                        fire = false;
-                    }
-                }
-            }
-            */
         }
 
 

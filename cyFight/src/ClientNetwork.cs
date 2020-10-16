@@ -73,6 +73,18 @@ namespace cyFight
             }
         }
 
+        public string NetworkStats
+        {
+            get
+            {
+                if (client.ServerConnection == null)
+                    return "";
+                return client.Statistics.ToString()
+                    + "Roundtrip Time: " + (client.ServerConnection.AverageRoundtripTime * 1000) + " ms"
+                    + "\nRemote Time: " + client.ServerConnection.RemoteTimeOffset;
+            }
+        }
+
         public bool IsConnected
         {
             get
@@ -177,6 +189,7 @@ namespace cyFight
                         Logger.WriteLine(LogType.DEBUG, "Unhandled message type: " + msg.MessageType + " " + msg.LengthBytes);
                         break;
                 }
+                client.Recycle(msg);
             }
         }
 

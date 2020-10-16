@@ -12,11 +12,12 @@ namespace cyServer
         const float Timestep = (float)(1.0 / 60.0); //in s
 
         static Stopwatch watch = new Stopwatch();
+        static double leftoverTime = 0;
+        static double spinGoal = 0;
         static void Main(string[] args)
         {
             var net = new Network();
 
-            double elapsed = 0;
             watch.Start();
             while (true)
             {
@@ -25,21 +26,19 @@ namespace cyServer
                 //this is stable over longer time periods (10s) but windows schedueling may cause lower-level jitter
                 //shouldn't be Too Big of a deal as this is planned to run on a linux server (which has tighter scheduling than windows), 
                 //and we have built-in jitter concerns from the network anyways
+                spinGoal = GoalTimestep - leftoverTime;
                 SpinWait.SpinUntil(HasElapsed);
-                elapsed += watch.Elapsed.TotalMilliseconds;
+                leftoverTime += watch.Elapsed.TotalMilliseconds;
                 watch.Restart();
-                while (elapsed > GoalTimestep)
-                {
-                    net.Update(Timestep);
-                    elapsed -= GoalTimestep;
-                }
+                net.Update(Timestep);
+                leftoverTime -= GoalTimestep;
             }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static bool HasElapsed()
         {
-            return watch.Elapsed.TotalMilliseconds > GoalTimestep;
+            return watch.Elapsed.TotalMilliseconds > spinGoal;
         }
     }
 }
