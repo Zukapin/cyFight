@@ -47,6 +47,7 @@ namespace cyFight
     class Player
     {
         CySim sim;
+        EventManager em;
         public int playerIndex;
 
         protected Capsule_MRT charGraphics;
@@ -56,6 +57,7 @@ namespace cyFight
         {
             this.sim = sim;
             this.playerIndex = playerID;
+            this.em = em;
 
             charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
 
@@ -80,6 +82,13 @@ namespace cyFight
 
             hamGraphics.position = hPose.Position;
             hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(hPose.Orientation);
+        }
+
+        public void Dispose()
+        {
+            charGraphics.Dispose();
+            hamGraphics.Dispose();
+            em.removeUpdateListener(GraphicsUpdate);
         }
     }
 
@@ -210,6 +219,8 @@ namespace cyFight
 
             ServerHandleToLocal = new BodyHandle[1024];
             ServerPlayerToLocal = new int[128];
+            for (int i = 0; i < ServerPlayerToLocal.Length; i++)
+                ServerPlayerToLocal[i] = -1;
             players = new List<Player>();
         }
 
@@ -226,7 +237,12 @@ namespace cyFight
             if (ServerPlayerToLocal.Length >= capacity)
                 return;
 
+            int oldLen = ServerPlayerToLocal.Length;
             Array.Resize(ref ServerPlayerToLocal, capacity);
+            for (int i = oldLen; i < capacity; i++)
+            {
+                ServerPlayerToLocal[i] = -1;
+            }
         }
 
         public float LoadTime()
@@ -379,7 +395,19 @@ namespace cyFight
             switch (msgID)
             {
                 case NetServerToClient.NEW_PLAYER:
-                    Logger.WriteLine(LogType.DEBUG, "New player joined");
+                    {
+                        Logger.WriteLine(LogType.DEBUG, "New player joined");
+                        var frame = msg.ReadInt32();
+                        var playerID = msg.ReadInt32();
+                        var posX = msg.ReadFloat();
+                        var posY = msg.ReadFloat();
+                        var posZ = msg.ReadFloat();
+                        var localID = sim.AddPlayer(new Vector3(posX, posY, posZ));
+
+                        EnsurePlayerCapacity(playerID);
+                        ServerPlayerToLocal[playerID] = localID;
+                        players.Add(new Player(sim, renderer, load_em, localID));
+                    }
                     break;
                 case NetServerToClient.NEW_PLAYER_YOU:
                     Logger.WriteLine(LogType.DEBUG, "I joined " + msg.LengthBytes);
@@ -397,7 +425,31 @@ namespace cyFight
                     doneLoading = true;
                     break;
                 case NetServerToClient.REMOVE_PLAYER:
-                    Logger.WriteLine(LogType.DEBUG, "Player removed");
+                    {
+                        Logger.WriteLine(LogType.DEBUG, "Player removed");
+                        var frame = msg.ReadInt32();
+                        var playerID = msg.ReadInt32();
+
+                        var localID = ServerPlayerToLocal[playerID];
+                        if (localID < 0)
+                        {
+                            Logger.WriteLine(LogType.DEBUG, "Got remove player for a player we don't have.");
+                            break;
+                        }
+
+                        for (int i = 0; i < players.Count; i++)
+                        {
+                            if (players[i].playerIndex == localID)
+                            {
+                                players[i].Dispose();
+                                players.RemoveAt(i);
+                                break;
+                            }
+                        }
+
+                        sim.RemovePlayer(localID);
+                        ServerPlayerToLocal[playerID] = -1;
+                    }
                     break;
                 case NetServerToClient.STATE_UPDATE:
                     OnStateUpdate(msg);
@@ -578,6 +630,11 @@ namespace cyFight
             {
                 ref var pState = ref state.playerStates[i];
                 var pID = ServerPlayerToLocal[pState.playerID];
+                if (pID < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a player ID from the server that we don't have an active map for.");
+                    continue;
+                }
                 var p = sim.GetPlayer(pID);
                 p.SetState(ref pState.player.pose, ref pState.player.velocity,
                     ref pState.hammer.pose, ref pState.hammer.velocity,
@@ -589,6 +646,11 @@ namespace cyFight
             {
                 ref var bState = ref state.bodyStates[i];
                 var bID = ServerHandleToLocal[bState.bodyHandle];
+                if (bID.Value < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a body ID from the server that we don't have an active map for.");
+                    continue;
+                }
 
                 var bodyRef = new BodyReference(bID, sim.Simulation.Bodies);
                 bodyRef.Pose = bState.pose;
