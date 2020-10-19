@@ -21,6 +21,7 @@ using System.Reflection.Metadata.Ecma335;
 using cySim;
 using Lidgren.Network;
 using System.Reflection.Metadata;
+using BepuUtilities.Collections;
 
 namespace cyFight
 {
@@ -446,40 +447,128 @@ namespace cyFight
         {
             public int Frame;
             public int numPlayers;
-            public PlayerState[] playerStates;
+            public QuickList<PlayerState> playerStates;
             public int numBodies;
-            public BodyState[] bodyStates;
+            public QuickList<BodyState> bodyStates;
         }
 
-        int JitterReadIndex = 0;
-        int JitterWriteIndex = 0;
-        int JitterCount = 0;
-        SimState[] JitterBuffer = new SimState[100];
+        RingBuffer<SimState> JitterBuffer = new RingBuffer<SimState>(32); //about 500ms of state
+
+        float JitterTimePeriod = 10; //seconds
+        int JitterAcceptableDrops = 0; //number of dropped states due to jitter that is acceptable per time period
+        int LatestStateRecieved = -1;
+        float CurrentJitterTime = 0;
+        int JitterFrameReshuffleMax = 10;
+
+        RingBuffer<float> FramesDroppedOutOfOrder = new RingBuffer<float>(128);
+        RingBuffer<float> FramesMissedDueToJitter = new RingBuffer<float>(128);
+        RingBuffer<float> FramesDroppedDuped = new RingBuffer<float>(128);
         void OnStateUpdate(NetIncomingMessage msg)
         {
-            if (JitterCount == JitterBuffer.Length)
+            if (JitterBuffer.Count == JitterBuffer.Capacity)
             {
                 //don't necessarily wan't to immediately resize here -- in cases where clients computer hangs for a bit this will easily happen
                 //but doesn't represent the actual running expectations
                 Logger.WriteLine(LogType.DEBUG, "Jitter Buffer not large enough to store next state");
                 return;
             }
-            ref SimState state = ref JitterBuffer[JitterWriteIndex++];
-            JitterCount++;
-            if (JitterWriteIndex == JitterBuffer.Length)
-                JitterWriteIndex = 0;
-            state.Frame = msg.ReadInt32();
+
+            if (!doneLoading)
+                return;
+
+            var frame = msg.ReadInt32();
+            if (frame == LatestStateRecieved)
+            {
+                FramesDroppedDuped.Add(CurrentJitterTime);
+                return;
+            }
+            if (frame < sim.CurrentFrame)
+            {
+                FramesMissedDueToJitter.Add(CurrentJitterTime);
+                return;
+            }
+
+            ref var state = ref JitterBuffer.AllocateUnsafely();
+            if (frame < LatestStateRecieved)
+            {
+                if (LatestStateRecieved - frame < JitterFrameReshuffleMax)
+                {
+                    //try to insert into the ring buffer
+                    //there is some... weirdass 'safe' pointer shenanigans here
+                    //be very careful
+                    int insertIndex = -1;
+                    for (int i = 0; i < 10; i++)
+                    {
+                        int index = JitterBuffer.Count - 3 - i;
+                        if (index < 0)
+                        {
+                            insertIndex = i + 1;
+                            break;
+                        }
+                        ref var cur = ref JitterBuffer[index];
+                        if (frame == cur.Frame)
+                        {
+                            //duped
+                            FramesDroppedDuped.Add(CurrentJitterTime);
+                            JitterBuffer.RemoveLast();
+                            return;
+                        }
+                        else if (frame > cur.Frame)
+                        {
+                            insertIndex = i + 1;
+                            break;
+                        }
+                    }
+
+                    if (insertIndex < 0)
+                    {
+                        //couldn't find?
+                        FramesDroppedOutOfOrder.Add(CurrentJitterTime);
+                        JitterBuffer.RemoveLast();
+                        return;
+                    }
+                    else
+                    {
+                        for (int i = 0; i < insertIndex; i++)
+                        {
+                            //this is pretty dumb
+                            ref var cur = ref JitterBuffer[JitterBuffer.Count - 2 - i];
+                            state.Frame = cur.Frame;
+                            state.numPlayers = cur.numPlayers;
+                            state.playerStates.EnsureCapacity(state.numPlayers, sim.BufferPool);
+                            state.playerStates.Clear();
+                            state.playerStates.AddRangeUnsafely(cur.playerStates);
+                            state.numBodies = cur.numBodies;
+                            state.bodyStates.EnsureCapacity(state.numBodies, sim.BufferPool);
+                            state.bodyStates.Clear();
+                            state.bodyStates.AddRangeUnsafely(cur.bodyStates);
+                            state = ref cur;
+                        }
+                    }
+                }
+                else
+                {//way the hell out of order
+                    FramesDroppedOutOfOrder.Add(CurrentJitterTime);
+                    JitterBuffer.RemoveLast();
+                    return;
+                }
+            }
+            LatestStateRecieved = frame;
+
+            state.Frame = frame;
             state.numPlayers = msg.ReadInt32();
-            state.playerStates = new PlayerState[state.numPlayers];
+            state.playerStates.EnsureCapacity(state.numPlayers, sim.BufferPool);
+            state.playerStates.Clear();
             for (int i = 0; i < state.numPlayers; i++)
             {
-                ReadPlayer(msg, ref state.playerStates[i]);
+                ReadPlayer(msg, ref state.playerStates.AllocateUnsafely());
             }
             state.numBodies = msg.ReadInt32();
-            state.bodyStates = new BodyState[state.numBodies];
+            state.bodyStates.EnsureCapacity(state.numBodies, sim.BufferPool);
+            state.bodyStates.Clear();
             for (int i = 0; i < state.numBodies; i++)
             {
-                ReadBody(msg, ref state.bodyStates[i]);
+                ReadBody(msg, ref state.bodyStates.AllocateUnsafely());
             }
         }
 
@@ -736,17 +825,29 @@ namespace cyFight
         }
 
         FontRenderer debugText;
+        int JitterGoalMinBuffer = 0;
+        int JitterGoalMaxBuffer = 2;
+        int FramesSkippedDueToMinBuffer = 0;
+        int FramesDoubledDueToMaxBuffer = 0;
         void UpdateSim(float dt)
         {
-            int LastWrite = JitterWriteIndex - 1;
-            if (LastWrite == -1)
-                LastWrite = JitterBuffer.Length - 1;
+            CurrentJitterTime += dt;
+            UpdateStatsBuffers();
 
+            int diffToNextState = -1;
+            if (JitterBuffer.Count != 0)
+                diffToNextState = JitterBuffer.ReadFirst().Frame - sim.CurrentFrame;
             debugText.text =
-                "Num frames buffered: " + JitterCount
+                "Num frames buffered: " + JitterBuffer.Count
                 + "\nLocal current frame: " + sim.CurrentFrame
-                + "\nFrame diff to next state available: " + (JitterBuffer[JitterReadIndex].Frame - sim.CurrentFrame)
-                + "\nFrame diff to latest state recieved: " + (JitterBuffer[LastWrite].Frame - sim.CurrentFrame)
+                + "\nFrame diff to next state available: " + diffToNextState
+                + "\nFrame diff to latest state recieved: " + (LatestStateRecieved - sim.CurrentFrame)
+                + "\nFrames dropped due to out of order: " + FramesDroppedOutOfOrder.Count
+                + "\nFrames dropped due to jitter: " + FramesMissedDueToJitter.Count
+                + "\nFrames dropped due to duplication: " + FramesDroppedDuped.Count
+                + "\nGoal Jitter Max Size: " + JitterGoalMaxBuffer
+                + "\nFrames skipped due to min buffer: " + FramesSkippedDueToMinBuffer
+                + "\nFrames doubled due to max buffer: " + FramesDoubledDueToMaxBuffer
                 + "\n" + network.NetworkStats;
 
             //decide here how much to update
@@ -754,44 +855,63 @@ namespace cyFight
             //the sliding window timeframe lets us adjust the jitter buffer size if network conditions change
             //window needs to be long enough to have reasonable stats, short enough to respond to shifting network conditions
             //we don't expect 'network conditions' to change very much, or care to respond to 1-2s blips
-            int goalMinBuffer = 1; //should probably always be 1 -- if our last frame is from behind us we need to chill
-            int goalMaxBuffer = 2; //needs to be calculated dynamically based on historical samples
 
             //if we don't have any jitter buffer we're not sure how far we off from the goal, so we just keep simming until something happens
-            int LastFrameDiff = JitterBuffer[LastWrite].Frame - sim.CurrentFrame;
-            if (JitterCount != 0 && LastFrameDiff < goalMinBuffer)
+            if (FramesMissedDueToJitter.Count > JitterAcceptableDrops)
+            {
+                JitterGoalMaxBuffer++;
+                FramesMissedDueToJitter.Clear();
                 return;
-            if (JitterCount != 0 && LastFrameDiff > goalMaxBuffer)
+            }
+            int LastFrameDiff = LatestStateRecieved - sim.CurrentFrame;
+            if (JitterBuffer.Count != 0 && LastFrameDiff < JitterGoalMinBuffer)
+            {
+                FramesSkippedDueToMinBuffer++;
+                return;
+            }
+            if (JitterBuffer.Count != 0 && LastFrameDiff > JitterGoalMaxBuffer)
             {//we have some choices here
                 //right now it just runs an 'extra' simulation update, which it'll keep doing til it catches up
                 //other options include just setting our simFrame higher -- it'll "jump" everything forward and take a second to resync with the server
                 //or doing more than 1 extra timestep here
+                FramesDoubledDueToMaxBuffer++;
                 TimestepSim(dt);
             }
 
             TimestepSim(dt);
         }
 
+        void UpdateStatsBuffers()
+        {
+            float timeCutoff = CurrentJitterTime - JitterTimePeriod;
+            while (FramesDroppedOutOfOrder.Count != 0 && FramesDroppedOutOfOrder.ReadFirst() < timeCutoff)
+            {
+                FramesDroppedOutOfOrder.RemoveFirst();
+            }
+            while (FramesMissedDueToJitter.Count != 0 && FramesMissedDueToJitter.ReadFirst() < timeCutoff)
+            {
+                FramesMissedDueToJitter.RemoveFirst();
+            }
+            while (FramesDroppedDuped.Count != 0 && FramesDroppedDuped.ReadFirst() < timeCutoff)
+            {
+                FramesDroppedDuped.RemoveFirst();
+            }
+        }
+
         void TimestepSim(float dt)
         {
-            while (JitterCount != 0)
+            while (JitterBuffer.Count != 0)
             {
-                ref var state = ref JitterBuffer[JitterReadIndex];
+                ref var state = ref JitterBuffer.ReadFirst();
                 if (state.Frame == sim.CurrentFrame)
                 {
                     ApplyState(ref state);
-                    JitterCount--;
-                    JitterReadIndex++;
-                    if (JitterReadIndex == JitterBuffer.Length)
-                        JitterReadIndex = 0;
+                    JitterBuffer.RemoveFirst();
                     break;
                 }
                 else if (state.Frame < sim.CurrentFrame)
                 {
-                    JitterCount--;
-                    JitterReadIndex++;
-                    if (JitterReadIndex == JitterBuffer.Length)
-                        JitterReadIndex = 0;
+                    JitterBuffer.RemoveFirst();
                 }
                 else //state fame is higher than our current frame
                 {

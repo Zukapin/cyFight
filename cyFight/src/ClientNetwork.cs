@@ -51,10 +51,10 @@ namespace cyFight
             config.UseMessageRecycling = true;
 
 #if DEBUG
-            config.SimulatedDuplicatesChance = 0.0f; //0-1f
-            config.SimulatedLoss = 0.0f; //0-1f
-            config.SimulatedMinimumLatency = 0.0f; //seconds
-            config.SimulatedRandomLatency = 0.0f; //seconds
+            config.SimulatedDuplicatesChance = 0.01f; //0-1f
+            config.SimulatedLoss = 0.01f; //0-1f
+            config.SimulatedMinimumLatency = 0.1f; //seconds
+            config.SimulatedRandomLatency = 0.05f; //seconds
 #endif
 
             config.Port = 0; //local port
