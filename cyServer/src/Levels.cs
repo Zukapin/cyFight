@@ -419,9 +419,9 @@ namespace cyServer
 
         public override void Update(float dt)
         {
-            sim.Update(dt);
-
             SendUpdateMessages();
+
+            sim.Update(dt);
         }
         
         public void SendUpdateMessages()

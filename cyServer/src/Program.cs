@@ -3,6 +3,9 @@ using System.Diagnostics;
 using System.Threading;
 using System.Runtime.CompilerServices;
 using cySim;
+using System.Threading.Tasks;
+using System.IO;
+using cyUtility;
 
 namespace cyServer
 {
@@ -18,8 +21,12 @@ namespace cyServer
         {
             var net = new Network();
 
+            var consoleInputThread = new Thread(new ThreadStart(ReadConsoleInput));
+            consoleInputThread.Start();
+
+            Logger.WriteLine(LogType.DEBUG, "Server is running");
             watch.Start();
-            while (true)
+            while (!KillThreads)
             {
                 //spinlock here til Timestep has passed
                 //we can actually remove the spinwait and it will still spin itself, but the timer doesn't do a great job when being restarted that frequently
@@ -33,12 +40,85 @@ namespace cyServer
                 net.Update(Timestep);
                 leftoverTime -= GoalTimestep;
             }
+
+            net.Shutdown();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static bool HasElapsed()
         {
             return watch.Elapsed.TotalMilliseconds > spinGoal;
+        }
+
+        static void ReadConsoleInput()
+        {
+            var inputStream = Console.OpenStandardInput();
+            Console.CancelKeyPress += OnConsoleCancel;
+
+            while (!KillThreads)
+            {
+                if (Reader.ReadLine(out var line, 100))
+                {
+                    if (line != null)
+                    {
+                        line = line.Trim();
+                        if (line.StartsWith("kill", true, null))
+                        {
+                            KillThreads = true;
+                            break;
+                        }
+                        else
+                        {
+                            Console.WriteLine("Unhandled command input: " + line);
+                        }
+                    }
+                }
+            }
+        }
+
+        static bool KillThreads = false;
+        
+        static void OnConsoleCancel(object sender, ConsoleCancelEventArgs e)
+        {
+            Logger.WriteLine(LogType.DEBUG, "Kill command recieved -- use the command 'kill' instead");
+            e.Cancel = true;
+        }
+
+        class Reader
+        {
+            private static Thread inputThread;
+            private static AutoResetEvent getInput, gotInput;
+            private static string input;
+
+            static Reader()
+            {
+                getInput = new AutoResetEvent(false);
+                gotInput = new AutoResetEvent(false);
+                inputThread = new Thread(reader);
+                inputThread.IsBackground = true;
+                inputThread.Start();
+            }
+
+            private static void reader()
+            {
+                while (true)
+                {
+                    getInput.WaitOne();
+                    input = Console.ReadLine();
+                    gotInput.Set();
+                }
+            }
+
+            public static bool ReadLine(out string line, int timeOutMillisecs = Timeout.Infinite)
+            {
+                getInput.Set();
+                bool success = gotInput.WaitOne(timeOutMillisecs);
+                if (success)
+                    line = input;
+                else
+                    line = null;
+                return success;
+            }
         }
     }
 }

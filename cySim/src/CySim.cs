@@ -29,12 +29,12 @@ namespace cySim
 
         public CySim()
         {
+            BufferPool = new BufferPool();
         }
 
         public void Init(int StartFrame = 0)
         {
             CurrentFrame = StartFrame;
-            BufferPool = new BufferPool();
 
             characters = new CharacterControllers(BufferPool);
 

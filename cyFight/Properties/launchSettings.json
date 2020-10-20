@@ -1,7 +1,8 @@
 {
   "profiles": {
     "cyFight": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "nativeDebugging": true
     }
   }
 }

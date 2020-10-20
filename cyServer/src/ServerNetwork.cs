@@ -14,6 +14,7 @@ using cySim;
 using BepuUtilities;
 using BepuUtilities.Collections;
 using BepuPhysics;
+using System.Threading;
 
 namespace cyServer
 {
@@ -45,8 +46,8 @@ namespace cyServer
 #if DEBUG
             config.SimulatedDuplicatesChance = 0.0f; //0-1f
             config.SimulatedLoss = 0.0f; //0-1f
-            config.SimulatedMinimumLatency = 0.0f; //seconds
-            config.SimulatedRandomLatency = 0.0f; //seconds
+            config.SimulatedMinimumLatency = 0.1f; //seconds
+            config.SimulatedRandomLatency = 0.05f; //seconds
 #endif
 
             config.Port = PORT; //local port
@@ -55,6 +56,13 @@ namespace cyServer
 
             serv = new NetServer(config);
             serv.Start(); //this sleeps for 50ms >.>
+        }
+
+        public void Shutdown()
+        {
+            serv.Shutdown("Server killing itself alas");
+            serv.FlushSendQueue();
+            Thread.Sleep(50); //give a little bit of time to send the shutdown messages
         }
 
         public NetOutgoingMessage CreateMessage()
@@ -107,6 +115,8 @@ namespace cyServer
                 switch (msg.MessageType)
                 {
                     case NetIncomingMessageType.Error: //"should never happen"
+                        Logger.WriteLine(LogType.ERROR, "Unknown error in message read");
+                        break;
                     case NetIncomingMessageType.ErrorMessage:
                         Logger.WriteLine(LogType.ERROR, msg.ReadString());
                         break;
@@ -115,7 +125,7 @@ namespace cyServer
                         break;
                     case NetIncomingMessageType.DebugMessage:
                     case NetIncomingMessageType.VerboseDebugMessage:
-                        Logger.WriteLine(LogType.DEBUG, msg.ReadString());
+                        Logger.WriteLine(LogType.VERBOSE, "Lidgren debug message: " + msg.ReadString());
                         break;
 
                     case NetIncomingMessageType.StatusChanged:
@@ -125,12 +135,15 @@ namespace cyServer
                         switch (status)
                         {
                             case NetConnectionStatus.Connected:
-                                Logger.WriteLine(LogType.DEBUG, "Connected:" + reason);
+                                Logger.WriteLine(LogType.DEBUG, "Connected: " + reason);
                                 OnConnect(msg.SenderConnection);
                                 break;
                             case NetConnectionStatus.Disconnected:
                                 Logger.WriteLine(LogType.DEBUG, "Disconnected: " + reason);
                                 OnDisconnect(msg.SenderConnection);
+                                break;
+                            case NetConnectionStatus.RespondedConnect:
+                                Logger.WriteLine(LogType.VERBOSE, "Connection attempt recieved: " + reason);
                                 break;
                             default:
                                 Logger.WriteLine(LogType.DEBUG, "Unhandled connection status: " + status + " with reason: " + reason);
@@ -146,6 +159,8 @@ namespace cyServer
                         Logger.WriteLine(LogType.DEBUG, "Unhandled message type: " + msg.MessageType + " " + msg.LengthBytes);
                         break;
                 }
+
+                serv.Recycle(msg);
             }
         }
 

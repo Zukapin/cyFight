@@ -507,7 +507,7 @@ namespace cyFight
         RingBuffer<SimState> JitterBuffer = new RingBuffer<SimState>(32); //about 500ms of state
 
         float JitterTimePeriod = 10; //seconds
-        int JitterAcceptableDrops = 0; //number of dropped states due to jitter that is acceptable per time period
+        int JitterAcceptableDrops = 10; //number of dropped states due to jitter that is acceptable per time period
         int LatestStateRecieved = -1;
         float CurrentJitterTime = 0;
         int JitterFrameReshuffleMax = 10;
@@ -515,18 +515,17 @@ namespace cyFight
         RingBuffer<float> FramesDroppedOutOfOrder = new RingBuffer<float>(128);
         RingBuffer<float> FramesMissedDueToJitter = new RingBuffer<float>(128);
         RingBuffer<float> FramesDroppedDuped = new RingBuffer<float>(128);
+        RingBuffer<float> FramesSkippedDueToMinBuffer = new RingBuffer<float>(128);
+        RingBuffer<float> FramesDoubledDueToMaxBuffer = new RingBuffer<float>(128);
+        RingBuffer<float> FramesWithNoServerState = new RingBuffer<float>(128);
         void OnStateUpdate(NetIncomingMessage msg)
         {
             if (JitterBuffer.Count == JitterBuffer.Capacity)
             {
                 //don't necessarily wan't to immediately resize here -- in cases where clients computer hangs for a bit this will easily happen
                 //but doesn't represent the actual running expectations
-                Logger.WriteLine(LogType.DEBUG, "Jitter Buffer not large enough to store next state");
-                return;
+                JitterBuffer.RemoveFirst();
             }
-
-            if (!doneLoading)
-                return;
 
             var frame = msg.ReadInt32();
             if (frame == LatestStateRecieved)
@@ -534,6 +533,8 @@ namespace cyFight
                 FramesDroppedDuped.Add(CurrentJitterTime);
                 return;
             }
+            if (frame > LatestStateRecieved)
+                LatestStateRecieved = frame;
             if (frame < sim.CurrentFrame)
             {
                 FramesMissedDueToJitter.Add(CurrentJitterTime);
@@ -605,7 +606,6 @@ namespace cyFight
                     return;
                 }
             }
-            LatestStateRecieved = frame;
 
             state.Frame = frame;
             state.numPlayers = msg.ReadInt32();
@@ -889,8 +889,6 @@ namespace cyFight
         FontRenderer debugText;
         int JitterGoalMinBuffer = 0;
         int JitterGoalMaxBuffer = 2;
-        int FramesSkippedDueToMinBuffer = 0;
-        int FramesDoubledDueToMaxBuffer = 0;
         void UpdateSim(float dt)
         {
             CurrentJitterTime += dt;
@@ -908,8 +906,9 @@ namespace cyFight
                 + "\nFrames dropped due to jitter: " + FramesMissedDueToJitter.Count
                 + "\nFrames dropped due to duplication: " + FramesDroppedDuped.Count
                 + "\nGoal Jitter Max Size: " + JitterGoalMaxBuffer
-                + "\nFrames skipped due to min buffer: " + FramesSkippedDueToMinBuffer
-                + "\nFrames doubled due to max buffer: " + FramesDoubledDueToMaxBuffer
+                + "\nFrames skipped due to min buffer: " + FramesSkippedDueToMinBuffer.Count
+                + "\nFrames doubled due to max buffer: " + FramesDoubledDueToMaxBuffer.Count
+                + "\nFrames with no server state: " + FramesWithNoServerState.Count
                 + "\n" + network.NetworkStats;
 
             //decide here how much to update
@@ -926,17 +925,17 @@ namespace cyFight
                 return;
             }
             int LastFrameDiff = LatestStateRecieved - sim.CurrentFrame;
-            if (JitterBuffer.Count != 0 && LastFrameDiff < JitterGoalMinBuffer)
+            if (LastFrameDiff < JitterGoalMinBuffer)
             {
-                FramesSkippedDueToMinBuffer++;
+                FramesSkippedDueToMinBuffer.Add(CurrentJitterTime);
                 return;
             }
-            if (JitterBuffer.Count != 0 && LastFrameDiff > JitterGoalMaxBuffer)
+            if (LastFrameDiff > JitterGoalMaxBuffer)
             {//we have some choices here
                 //right now it just runs an 'extra' simulation update, which it'll keep doing til it catches up
                 //other options include just setting our simFrame higher -- it'll "jump" everything forward and take a second to resync with the server
                 //or doing more than 1 extra timestep here
-                FramesDoubledDueToMaxBuffer++;
+                FramesDoubledDueToMaxBuffer.Add(CurrentJitterTime);
                 TimestepSim(dt);
             }
 
@@ -958,10 +957,23 @@ namespace cyFight
             {
                 FramesDroppedDuped.RemoveFirst();
             }
+            while (FramesSkippedDueToMinBuffer.Count != 0 && FramesSkippedDueToMinBuffer.ReadFirst() < timeCutoff)
+            {
+                FramesSkippedDueToMinBuffer.RemoveFirst();
+            }
+            while (FramesDoubledDueToMaxBuffer.Count != 0 && FramesDoubledDueToMaxBuffer.ReadFirst() < timeCutoff)
+            {
+                FramesDoubledDueToMaxBuffer.RemoveFirst();
+            }
+            while (FramesWithNoServerState.Count != 0 && FramesWithNoServerState.ReadFirst() < timeCutoff)
+            {
+                FramesWithNoServerState.RemoveFirst();
+            }
         }
 
         void TimestepSim(float dt)
         {
+            bool stateApplied = false;
             while (JitterBuffer.Count != 0)
             {
                 ref var state = ref JitterBuffer.ReadFirst();
@@ -969,6 +981,7 @@ namespace cyFight
                 {
                     ApplyState(ref state);
                     JitterBuffer.RemoveFirst();
+                    stateApplied = true;
                     break;
                 }
                 else if (state.Frame < sim.CurrentFrame)
@@ -980,6 +993,9 @@ namespace cyFight
                     break;
                 }
             }
+
+            if (!stateApplied)
+                FramesWithNoServerState.Add(CurrentJitterTime);
             sim.Update(dt);
         }
 
