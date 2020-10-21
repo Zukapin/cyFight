@@ -26,7 +26,7 @@ namespace cyFight
 
         bool tryConnect = false;
         int connectIndex = 0;
-        static string[] hostnames = new string[] { "127.0.0.1", "70.59.28.38", "192.168.0.11", "127.0.0.1" };
+        static string[] hostnames = new string[] { "70.59.28.38", "192.168.0.11", "127.0.0.1" };
 
         const int port = 6114;
 
@@ -53,8 +53,8 @@ namespace cyFight
 #if DEBUG
             config.SimulatedDuplicatesChance = 0.0f; //0-1f
             config.SimulatedLoss = 0.0f; //0-1f
-            config.SimulatedMinimumLatency = 0.1f; //seconds
-            config.SimulatedRandomLatency = 0.05f; //seconds
+            config.SimulatedMinimumLatency = 0.0f; //seconds
+            config.SimulatedRandomLatency = 0.0f; //seconds
 #endif
 
             config.Port = 0; //local port

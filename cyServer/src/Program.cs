@@ -17,9 +17,11 @@ namespace cyServer
         static Stopwatch watch = new Stopwatch();
         static double leftoverTime = 0;
         static double spinGoal = 0;
+
+        static Network net;
         static void Main(string[] args)
         {
-            var net = new Network();
+            net = new Network();
 
             var consoleInputThread = new Thread(new ThreadStart(ReadConsoleInput));
             consoleInputThread.Start();
@@ -67,6 +69,36 @@ namespace cyServer
                             KillThreads = true;
                             break;
                         }
+#if DEBUG
+                        else if (line.StartsWith("lag start 1", true, null))
+                        {
+                            net.LagStart1();
+                        }
+                        else if (line.StartsWith("lag start 2", true, null))
+                        {
+                            net.LagStart2();
+                        }
+                        else if (line.StartsWith("lag start 3", true, null))
+                        {
+                            net.LagStart3();
+                        }
+                        else if (line.StartsWith("lag start 4", true, null))
+                        {
+                            net.LagStart4();
+                        }
+                        else if (line.StartsWith("lag start 5", true, null))
+                        {
+                            net.LagStart5();
+                        }
+                        else if (line.StartsWith("lag start 6", true, null))
+                        {
+                            net.LagStart6();
+                        }
+                        else if (line.StartsWith("lag stop", true, null))
+                        {
+                            net.LagStop();
+                        }
+#endif
                         else
                         {
                             Console.WriteLine("Unhandled command input: " + line);

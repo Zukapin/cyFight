@@ -506,11 +506,12 @@ namespace cyFight
 
         RingBuffer<SimState> JitterBuffer = new RingBuffer<SimState>(32); //about 500ms of state
 
-        float JitterTimePeriod = 10; //seconds
+        float NetStatsTimeWindow = 10; //seconds
+        float JitterBufferAdjustmentWindow = 2;
         int JitterAcceptableDrops = 10; //number of dropped states due to jitter that is acceptable per time period
         int LatestStateRecieved = -1;
         float CurrentJitterTime = 0;
-        int JitterFrameReshuffleMax = 10;
+        int JitterFrameReshuffleMax = 20;
 
         RingBuffer<float> FramesDroppedOutOfOrder = new RingBuffer<float>(128);
         RingBuffer<float> FramesMissedDueToJitter = new RingBuffer<float>(128);
@@ -518,6 +519,7 @@ namespace cyFight
         RingBuffer<float> FramesSkippedDueToMinBuffer = new RingBuffer<float>(128);
         RingBuffer<float> FramesDoubledDueToMaxBuffer = new RingBuffer<float>(128);
         RingBuffer<float> FramesWithNoServerState = new RingBuffer<float>(128);
+        RingBuffer<int> FramesRecieved = new RingBuffer<int>(128);
         void OnStateUpdate(NetIncomingMessage msg)
         {
             if (JitterBuffer.Count == JitterBuffer.Capacity)
@@ -533,6 +535,7 @@ namespace cyFight
                 FramesDroppedDuped.Add(CurrentJitterTime);
                 return;
             }
+            FramesRecieved.Add(frame);
             if (frame > LatestStateRecieved)
                 LatestStateRecieved = frame;
             if (frame < sim.CurrentFrame)
@@ -550,7 +553,7 @@ namespace cyFight
                     //there is some... weirdass 'safe' pointer shenanigans here
                     //be very careful
                     int insertIndex = -1;
-                    for (int i = 0; i < 10; i++)
+                    for (int i = 0; i < JitterFrameReshuffleMax; i++)
                     {
                         int index = JitterBuffer.Count - 3 - i;
                         if (index < 0)
@@ -586,15 +589,11 @@ namespace cyFight
                         {
                             //this is pretty dumb
                             ref var cur = ref JitterBuffer[JitterBuffer.Count - 2 - i];
-                            state.Frame = cur.Frame;
-                            state.numPlayers = cur.numPlayers;
-                            state.playerStates.EnsureCapacity(state.numPlayers, sim.BufferPool);
-                            state.playerStates.Clear();
-                            state.playerStates.AddRangeUnsafely(cur.playerStates);
-                            state.numBodies = cur.numBodies;
-                            state.bodyStates.EnsureCapacity(state.numBodies, sim.BufferPool);
-                            state.bodyStates.Clear();
-                            state.bodyStates.AddRangeUnsafely(cur.bodyStates);
+                            var statePlayers = state.playerStates;
+                            var stateBodies = state.bodyStates;
+                            state = cur;
+                            cur.playerStates = statePlayers;
+                            cur.bodyStates = stateBodies;
                             state = ref cur;
                         }
                     }
@@ -610,14 +609,14 @@ namespace cyFight
             state.Frame = frame;
             state.numPlayers = msg.ReadInt32();
             state.playerStates.EnsureCapacity(state.numPlayers, sim.BufferPool);
-            state.playerStates.Clear();
+            state.playerStates.Count = 0;
             for (int i = 0; i < state.numPlayers; i++)
             {
                 ReadPlayer(msg, ref state.playerStates.AllocateUnsafely());
             }
             state.numBodies = msg.ReadInt32();
             state.bodyStates.EnsureCapacity(state.numBodies, sim.BufferPool);
-            state.bodyStates.Clear();
+            state.bodyStates.Count = 0;
             for (int i = 0; i < state.numBodies; i++)
             {
                 ReadBody(msg, ref state.bodyStates.AllocateUnsafely());
@@ -889,6 +888,9 @@ namespace cyFight
         FontRenderer debugText;
         int JitterGoalMinBuffer = 0;
         int JitterGoalMaxBuffer = 2;
+
+        RingBuffer<(float Time, int Min, int Max)> JitterMinMaxFrames = new RingBuffer<(float, int, int)>(1024);
+        int ActualJitterBufferRange = -1;
         void UpdateSim(float dt)
         {
             CurrentJitterTime += dt;
@@ -909,6 +911,7 @@ namespace cyFight
                 + "\nFrames skipped due to min buffer: " + FramesSkippedDueToMinBuffer.Count
                 + "\nFrames doubled due to max buffer: " + FramesDoubledDueToMaxBuffer.Count
                 + "\nFrames with no server state: " + FramesWithNoServerState.Count
+                + "\nActual jitter range: " + ActualJitterBufferRange
                 + "\n" + network.NetworkStats;
 
             //decide here how much to update
@@ -920,12 +923,74 @@ namespace cyFight
             //if we don't have any jitter buffer we're not sure how far we off from the goal, so we just keep simming until something happens
             if (FramesMissedDueToJitter.Count > JitterAcceptableDrops)
             {
-                JitterGoalMaxBuffer++;
-                FramesMissedDueToJitter.Clear();
-                return;
+                //JitterGoalMaxBuffer++;
+                //FramesMissedDueToJitter.Clear();
+                //JitterMinMaxFrames.Clear();
+                //return;
             }
             int LastFrameDiff = LatestStateRecieved - sim.CurrentFrame;
-            if (LastFrameDiff < JitterGoalMinBuffer)
+            int JitterRangeMin = LastFrameDiff;
+            int JitterRangeMax = LastFrameDiff;
+
+            while (FramesRecieved.Count != 0)
+            {
+                var cur = FramesRecieved.ReadFirst();
+                FramesRecieved.RemoveFirst();
+
+                var diff = cur - sim.CurrentFrame;
+                if (JitterRangeMin > diff)
+                    JitterRangeMin = diff;
+                if (JitterRangeMax < diff)
+                    JitterRangeMax = diff;
+            }
+
+            if (JitterMinMaxFrames.Count != 0)
+            {
+                bool LargestFound = false;
+                bool SmallestFound = false;
+
+                for (int i = JitterMinMaxFrames.Count - 1; i >= 0; i--)
+                {
+                    ref var t = ref JitterMinMaxFrames[i];
+                    if (JitterRangeMin < t.Min)
+                    {
+                        t.Min = JitterRangeMin;
+                        SmallestFound = true;
+                    }
+                    if (JitterRangeMax > t.Max)
+                    {
+                        t.Max = JitterRangeMax;
+                        LargestFound = true;
+                    }
+                }
+
+                if (LargestFound || SmallestFound)
+                {
+                    JitterMinMaxFrames.Add((CurrentJitterTime, JitterRangeMin, JitterRangeMax));
+                }
+            }
+
+            if (JitterMinMaxFrames.Count == 0)
+            {
+                JitterMinMaxFrames.Add((CurrentJitterTime, JitterRangeMin, JitterRangeMax));
+            }
+
+            float timeCutoff = CurrentJitterTime - JitterBufferAdjustmentWindow;
+            while (JitterMinMaxFrames.Count != 0)
+            {
+                ref var t = ref JitterMinMaxFrames.ReadFirst();
+                ActualJitterBufferRange = t.Max - t.Min;
+                JitterGoalMaxBuffer = ActualJitterBufferRange + JitterGoalMinBuffer;
+
+                if (t.Time < timeCutoff)
+                {
+                    JitterMinMaxFrames.RemoveFirst();
+                }
+                else
+                    break;
+            }
+
+            if (JitterRangeMin < JitterGoalMinBuffer)
             {
                 FramesSkippedDueToMinBuffer.Add(CurrentJitterTime);
                 return;
@@ -944,7 +1009,7 @@ namespace cyFight
 
         void UpdateStatsBuffers()
         {
-            float timeCutoff = CurrentJitterTime - JitterTimePeriod;
+            float timeCutoff = CurrentJitterTime - NetStatsTimeWindow;
             while (FramesDroppedOutOfOrder.Count != 0 && FramesDroppedOutOfOrder.ReadFirst() < timeCutoff)
             {
                 FramesDroppedOutOfOrder.RemoveFirst();
@@ -1003,6 +1068,7 @@ namespace cyFight
         {
             var msg = network.CreateMessage();
             msg.Write((int)NetClientToServer.PLAYER_INPUT);
+            msg.Write(sim.CurrentFrame);
             NetInterop.SerializePlayerInput(ref myPlayer.Input, msg);
             network.SendMessage(msg, NetDeliveryMethod.Unreliable, 0);
         }
@@ -1033,6 +1099,20 @@ namespace cyFight
             void SetHandle(BodyHandle handle, Simulation Simulation);
         }
 
+        static Color[] AcceptableColors = new Color[]
+        {
+            Color.IndianRed,
+            Color.DarkMagenta,
+            Color.DarkBlue,
+            Color.DarkCyan,
+            Color.DarkGreen,
+            Color.DarkOrange,
+            Color.DarkGoldenrod,
+            Color.DarkGray
+        };
+
+        static Random ColorRandomizer = new Random();
+
         class BoxThingy : IBodyRenderer
         {
             List<BodyReference> bodyRefs;
@@ -1040,7 +1120,7 @@ namespace cyFight
             public BoxThingy(float width, float height, float length, Renderer renderer, EventManager em)
             {
                 box = new Box_MRT(renderer, null, 0);
-                box.color = Color.DarkSlateGray;
+                box.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
                 box.scale = new Vector3(width, height, length);
 
                 em.addDrawMRT(0, DrawMRT);
@@ -1089,7 +1169,7 @@ namespace cyFight
             public CylinderThingy(float radius, float length, Renderer renderer, EventManager em)
             {
                 cyl = new Cylinder_MRT(renderer, null, 0);
-                cyl.color = Color.DarkRed;
+                cyl.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
                 cyl.scale = new Vector3(radius, length, radius);
 
                 em.addDrawMRT(0, DrawMRT);
@@ -1139,7 +1219,7 @@ namespace cyFight
             public MagicBox(Simulation simulation, Renderer renderer, EventManager em, BodyHandle handle)
             {
                 box = new Cylinder_MRT(renderer, em, 0);
-                box.color = Color.DarkRed;
+                box.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
                 box.scale = new Vector3(1f, 1f, 1f);
                 em.addUpdateListener(0, Update);
 

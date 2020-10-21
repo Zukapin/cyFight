@@ -46,8 +46,8 @@ namespace cyServer
 #if DEBUG
             config.SimulatedDuplicatesChance = 0.0f; //0-1f
             config.SimulatedLoss = 0.0f; //0-1f
-            config.SimulatedMinimumLatency = 0.1f; //seconds
-            config.SimulatedRandomLatency = 0.05f; //seconds
+            config.SimulatedMinimumLatency = 0.0f; //seconds
+            config.SimulatedRandomLatency = 0.0f; //seconds
 #endif
 
             config.Port = PORT; //local port
@@ -57,6 +57,57 @@ namespace cyServer
             serv = new NetServer(config);
             serv.Start(); //this sleeps for 50ms >.>
         }
+
+#if DEBUG
+        [Conditional("DEBUG")]
+        public void LagStart1()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.1f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.0f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStart2()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.0f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.1f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStart3()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.1f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.1f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStart4()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.3f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.0f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStart5()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.0f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.3f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStart6()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.3f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.3f; //seconds
+        }
+
+        [Conditional("DEBUG")]
+        public void LagStop()
+        {
+            serv.Configuration.SimulatedMinimumLatency = 0.0f; //seconds
+            serv.Configuration.SimulatedRandomLatency = 0.0f; //seconds
+        }
+#endif
 
         public void Shutdown()
         {

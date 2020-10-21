@@ -262,6 +262,12 @@ namespace cyServer
 
         QuickList<BodyHandle> dynBodies;
 
+        struct ServerPlayerData
+        {
+            public int LatestInputFrame;
+        }
+        ServerPlayerData[] PlayerData;
+
         public LevelOne(Network Network)
         {
             this.Network = Network;
@@ -306,6 +312,21 @@ namespace cyServer
             }
 
             bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylMass, cylSpecMargin, cylinders));
+
+            EnsurePlayerSize(128);
+        }
+
+        void EnsurePlayerSize(int capacity)
+        {
+            if (PlayerData == null)
+            {
+                PlayerData = new ServerPlayerData[capacity];
+            }
+            else if (capacity > PlayerData.Length)
+            {
+                int newSize = Math.Max(capacity, PlayerData.Length * 2);
+                Array.Resize(ref PlayerData, newSize);
+            }
         }
 
         void SerializeAll(NetOutgoingMessage msg)
@@ -333,6 +354,8 @@ namespace cyServer
             startPos = QuaternionEx.Transform(startPos, rot);
             var playerID = sim.AddPlayer(startPos);
             conn.Tag = playerID;
+            EnsurePlayerSize(playerID);
+            PlayerData[playerID] = default;
 
             var msgToNewPlayer = Network.CreateMessage();
             msgToNewPlayer.Write((int)NetServerToClient.NEW_PLAYER_YOU);
@@ -370,6 +393,8 @@ namespace cyServer
                 return;
             }
 
+            ref var playerData = ref PlayerData[playerID.Value];
+
             var msgID = (NetClientToServer)msg.ReadInt32();
             if (!Enum.IsDefined(msgID))
             {
@@ -381,7 +406,12 @@ namespace cyServer
             {
                 case NetClientToServer.PLAYER_INPUT:
                     var player = sim.GetPlayer(playerID.Value);
-                    NetInterop.ReadPlayerInput(ref player.Input, msg);
+                    var frame = msg.ReadInt32();
+                    if (frame > playerData.LatestInputFrame)
+                    {
+                        playerData.LatestInputFrame = frame;
+                        NetInterop.ReadPlayerInput(ref player.Input, msg);
+                    }
                     break;
                 default:
                     Logger.WriteLine(LogType.ERROR, "Unhandled message type on server data: " + msgID);
