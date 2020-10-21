@@ -959,7 +959,6 @@ namespace cySim
 
                     if (targetCandidate.Depth > float.MinValue)
                     {
-                        ref var target = ref workerCache.HammerTargetsToSmash.AllocateUnsafely();
                         if (targetCandidate.Target.Mobility == CollidableMobility.Dynamic || targetCandidate.Target.Mobility == CollidableMobility.Kinematic)
                         {//kinematics can still have velocities -- so we can figure out the blowback impulse fine, even if the target impulse doesn't do much
                             ref var targetBodyLocation = ref Simulation.Bodies.HandleToLocation[targetCandidate.Target.BodyHandle.Value];
@@ -975,15 +974,19 @@ namespace cySim
 
                             var impulseSpeed = (hammerContactVelocity - targetContactVelocity).Length() * hammer.SmashValue;
 
-                            target.HammerIndex = hammerIndex;
-                            target.HammerBodyIndex = bodyLocation.Index;
-                            target.Impulse = -targetCandidate.Normal * impulseSpeed;
-                            target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                            if (!MathChecker.IsInvalid(impulseSpeed))
+                            {
+                                ref var target = ref workerCache.HammerTargetsToSmash.AllocateUnsafely();
+                                target.HammerIndex = hammerIndex;
+                                target.HammerBodyIndex = bodyLocation.Index;
+                                target.Impulse = -targetCandidate.Normal * impulseSpeed;
+                                target.ImpulseOffset = targetCandidate.OffsetFromTarget;
 
-                            if (targetCandidate.Target.Mobility == CollidableMobility.Dynamic)
-                                target.TargetIndex = targetBodyLocation.Index;
-                            else
-                                target.TargetIndex = -1;
+                                if (targetCandidate.Target.Mobility == CollidableMobility.Dynamic)
+                                    target.TargetIndex = targetBodyLocation.Index;
+                                else
+                                    target.TargetIndex = -1;
+                            }
                         }
                         else //(targetCandidate.Target.Mobility == CollidableMobility.Static)
                         {
@@ -994,11 +997,15 @@ namespace cySim
 
                             var impulseSpeed = hammerContactVelocity.Length() * hammer.SmashValue;
 
-                            target.HammerIndex = hammerIndex;
-                            target.HammerBodyIndex = bodyLocation.Index;
-                            target.TargetIndex = -1;
-                            target.Impulse = -targetCandidate.Normal * impulseSpeed;
-                            target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                            if (!MathChecker.IsInvalid(impulseSpeed))
+                            {
+                                ref var target = ref workerCache.HammerTargetsToSmash.AllocateUnsafely();
+                                target.HammerIndex = hammerIndex;
+                                target.HammerBodyIndex = bodyLocation.Index;
+                                target.TargetIndex = -1;
+                                target.Impulse = -targetCandidate.Normal * impulseSpeed;
+                                target.ImpulseOffset = targetCandidate.OffsetFromTarget;
+                            }
                         }
                     }
                 }

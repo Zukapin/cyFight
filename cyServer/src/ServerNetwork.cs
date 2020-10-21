@@ -186,7 +186,7 @@ namespace cyServer
                         switch (status)
                         {
                             case NetConnectionStatus.Connected:
-                                Logger.WriteLine(LogType.DEBUG, "Connected: " + reason);
+                                Logger.WriteLine(LogType.DEBUG, "Connected to " + msg.SenderEndPoint.Address.ToString());
                                 OnConnect(msg.SenderConnection);
                                 break;
                             case NetConnectionStatus.Disconnected:
