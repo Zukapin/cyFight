@@ -59,16 +59,16 @@ namespace cyFight
             this.playerIndex = playerID;
             this.em = em;
 
-            charGraphics = new Capsule_MRT(renderer, em, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
+            charGraphics = new Capsule_MRT(renderer, null, 0, Renderer.DefaultAssets.VB_CAPSULE_POS_NORM_HALFRAD);
 
-            hamGraphics = new Cylinder_MRT(renderer, em, 0);
+            hamGraphics = new Cylinder_MRT(renderer, null, 0);
             hamGraphics.color = Color.Blue;
             hamGraphics.scale = new Vector3(0.25f, 0.5f, 0.25f);
 
-            em.addUpdateListener(0, GraphicsUpdate);
+            em.addDrawMRT(0, Draw);
         }
 
-        void GraphicsUpdate(float dt)
+        void Draw()
         {
             var c = sim.GetPlayer(playerIndex);
 
@@ -82,13 +82,16 @@ namespace cyFight
 
             hamGraphics.position = hPose.Position;
             hamGraphics.rotation = Matrix3x3.CreateFromQuaternion(hPose.Orientation);
+
+            charGraphics.DrawMRT();
+            hamGraphics.DrawMRT();
         }
 
         public void Dispose()
         {
             charGraphics.Dispose();
             hamGraphics.Dispose();
-            em.removeUpdateListener(GraphicsUpdate);
+            em.removeMRT(Draw);
         }
     }
 
@@ -209,6 +212,12 @@ namespace cyFight
         BodyHandle[] ServerHandleToLocal;
         int[] ServerPlayerToLocal;
 
+#if DEBUG
+        CySim fullSim;
+        SharpDX.Direct3D11.RenderTargetView renderTarget;
+        SharpDX.Direct3D11.ShaderResourceView renderView;
+#endif
+
         public TestScene(GameStage stage)
         {
             this.stage = stage;
@@ -322,6 +331,31 @@ namespace cyFight
         {
             load_em = em;
             sim = new CySim();
+#if DEBUG
+            fullSim = new CySim();
+            SharpDX.Direct3D11.Texture2D renderTex = new SharpDX.Direct3D11.Texture2D(renderer.Device,
+                new SharpDX.Direct3D11.Texture2DDescription()
+                {
+                    Format = SharpDX.DXGI.Format.R8G8B8A8_UNorm,
+                    BindFlags = SharpDX.Direct3D11.BindFlags.RenderTarget | SharpDX.Direct3D11.BindFlags.ShaderResource,
+                    Width = renderer.ResolutionWidth,
+                    Height = renderer.ResolutionHeight,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    CpuAccessFlags = SharpDX.Direct3D11.CpuAccessFlags.None,
+                    OptionFlags = SharpDX.Direct3D11.ResourceOptionFlags.None,
+                    Usage = SharpDX.Direct3D11.ResourceUsage.Default,
+                    SampleDescription = new SharpDX.DXGI.SampleDescription(1, 0)
+                });
+            renderTarget = new SharpDX.Direct3D11.RenderTargetView(renderer.Device, renderTex);
+            renderView = new SharpDX.Direct3D11.ShaderResourceView(renderer.Device, renderTex);
+            em.addDraw2D(-10000, DrawOtherWorld);
+
+            shader = renderer.Assets.GetShader(Renderer.DefaultAssets.SH_POS_TEX);
+            buf = renderer.Assets.GetVertexBuffer(Renderer.DefaultAssets.VB_QUAD_POS_TEX_UNIT);
+            sampler = renderer.samplerLinear;
+            worldBuffer = renderer.Assets.GetBuffer<Matrix>(Renderer.DefaultAssets.BUF_WORLD);
+#endif
             network = new Network(this);
             network.Connect();
 
@@ -354,6 +388,33 @@ namespace cyFight
                 Thread.Sleep(1);
             }
         }
+
+#if DEBUG
+        Shader shader;
+        VertexBuffer buf;
+        SharpDX.Direct3D11.SamplerState sampler;
+        ConstBuffer<Matrix> worldBuffer;
+
+        Vector2 position = new Vector2(0, 0);
+        Vector2 scale = new Vector2(960, 540);
+
+        void DrawOtherWorld()
+        {
+            renderer.Context.ClearRenderTargetView(renderTarget, new SharpDX.Mathematics.Interop.RawColor4(0, 0, 0, 1f));
+
+            shader.Bind(renderer.Context);
+            renderer.Context.InputAssembler.SetVertexBuffers(0, buf.vbBinding);
+            renderer.Context.PixelShader.SetShaderResource(0, renderView);
+            renderer.Context.PixelShader.SetSampler(0, sampler);
+
+            Matrix3x3.CreateScale(new Vector3(scale.X, scale.Y, 1), out Matrix3x3 scaleMat);
+            Matrix.CreateRigid(scaleMat, new Vector3(position.X, position.Y, 0), out worldBuffer.dat[0]);
+            worldBuffer.Write(renderer.Context);
+
+            renderer.Context.VertexShader.SetConstantBuffer(1, worldBuffer.buf);
+            renderer.Context.Draw(buf.numVerts, 0);
+        }
+#endif
 
         public void OnConnect()
         {
@@ -407,6 +468,11 @@ namespace cyFight
                         EnsurePlayerCapacity(playerID);
                         ServerPlayerToLocal[playerID] = localID;
                         players.Add(new Player(sim, renderer, load_em, localID));
+
+#if DEBUG
+                        var hiddenID = fullSim.AddPlayer(new Vector3(posX, posY, posZ));
+                        Debug.Assert(localID == hiddenID, "Debug sim desynced from main sim -- player add IDs don't match");
+#endif
                     }
                     break;
                 case NetServerToClient.NEW_PLAYER_YOU:

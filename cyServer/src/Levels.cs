@@ -288,7 +288,7 @@ namespace cyServer
             var cylIndex = Simulation.Shapes.Add(cylShape);
 
             const int pyramidCount = 1;
-            const int rowCount = 2;
+            const int rowCount = 20;
             var cylinders = new List<BodyHandle>();
             for (int pyramidIndex = 0; pyramidIndex < pyramidCount; ++pyramidIndex)
             {
@@ -476,7 +476,7 @@ namespace cyServer
                     Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
                 }
                 //note: can check individual connection MTU with conn.CurrentMTU, but it will essentially always be 1500 so whatever
-                Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
+                //Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
                 Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);
             }
         }

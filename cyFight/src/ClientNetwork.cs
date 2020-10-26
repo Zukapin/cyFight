@@ -26,7 +26,7 @@ namespace cyFight
 
         bool tryConnect = false;
         int connectIndex = 0;
-        static string[] hostnames = new string[] { "70.59.28.38", "192.168.0.11", "127.0.0.1" };
+        static string[] hostnames = new string[] { "127.0.0.1", "70.59.28.38", "192.168.0.11", "127.0.0.1" };
 
         const int port = 6114;
 
