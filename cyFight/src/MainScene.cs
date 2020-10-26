@@ -46,7 +46,7 @@ namespace cyFight
 
     class Player
     {
-        CySim sim;
+        protected CySim sim;
         EventManager em;
         public int playerIndex;
 
@@ -193,7 +193,11 @@ namespace cyFight
         void Update(float dt)
         {
             input.ViewDirection = cam.getForwardVec();
-            cam.AnchorPos = charGraphics.position;
+
+            var c = sim.GetPlayer(playerIndex);
+
+            var characterBody = new BodyReference(c.BodyHandle, sim.Simulation.Bodies);
+            cam.AnchorPos = characterBody.Pose.Position;
         }
     }
 
@@ -954,6 +958,7 @@ namespace cyFight
         FontRenderer debugText;
         int JitterGoalMinBuffer = 0;
         int JitterGoalMaxBuffer = 2;
+        const int JitterGoalExtraBuffer = 1; //adds to max goal, an 'okay' number of frames to be off by
 
         RingBuffer<(float Time, int Min, int Max)> JitterMinMaxFrames = new RingBuffer<(float, int, int)>(1024);
         int ActualJitterBufferRange = -1;
@@ -1046,7 +1051,7 @@ namespace cyFight
             {
                 ref var t = ref JitterMinMaxFrames.ReadFirst();
                 ActualJitterBufferRange = t.Max - t.Min;
-                JitterGoalMaxBuffer = ActualJitterBufferRange + JitterGoalMinBuffer;
+                JitterGoalMaxBuffer = ActualJitterBufferRange + JitterGoalMinBuffer + JitterGoalExtraBuffer;
 
                 if (t.Time < timeCutoff)
                 {
