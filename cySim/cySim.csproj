@@ -2,13 +2,18 @@
 
   <PropertyGroup>
     <TargetFramework>net5.0</TargetFramework>
-    <Configurations>Debug;Release</Configurations>
+    <Configurations>Debug;Release;DebugClient</Configurations>
     <Platforms>x64</Platforms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <DefineConstants>DEBUG</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='DebugClient'">
+    <DefineConstants>DEBUG</DefineConstants>
+    <DefineConstants>TEST_SIM</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

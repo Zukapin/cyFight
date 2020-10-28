@@ -214,47 +214,5 @@ namespace cyServer
                 serv.Recycle(msg);
             }
         }
-
-
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void SerializePlayer(int i, CySim sim, NetOutgoingMessage msg)
-        {
-            var p = sim.GetPlayer(i);
-            msg.Write(i);
-            SerializeBody(p.BodyHandle, sim.Simulation, msg);
-            //possibly send character support or other status here
-            SerializeBody(p.HammerHandle, sim.Simulation, msg);
-            ref var h = ref p.Hammer;
-            msg.Write((byte)h.HammerState);
-            msg.Write(h.HammerDT);
-            NetInterop.SerializePlayerInput(ref p.Input, msg);
-        }
-
-        /// <summary>
-        /// Serializes a dynamic body's current state -- position, orientation, linear velocity, angular velocity
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void SerializeBody(BodyHandle handle, Simulation Simulation, NetOutgoingMessage msg)
-        {
-            var bodyRef = new BodyReference(handle, Simulation.Bodies);
-            var pose = bodyRef.Pose;
-            var vel = bodyRef.Velocity;
-
-            msg.Write(handle.Value);
-            msg.Write(pose.Position.X);
-            msg.Write(pose.Position.Y);
-            msg.Write(pose.Position.Z);
-            msg.Write(pose.Orientation.X);
-            msg.Write(pose.Orientation.Y);
-            msg.Write(pose.Orientation.Z);
-            msg.Write(pose.Orientation.W);
-            msg.Write(vel.Linear.X);
-            msg.Write(vel.Linear.Y);
-            msg.Write(vel.Linear.Z);
-            msg.Write(vel.Angular.X);
-            msg.Write(vel.Angular.Y);
-            msg.Write(vel.Angular.Z);
-        }
     }
 }

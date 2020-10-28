@@ -216,8 +216,7 @@ namespace cyFight
         BodyHandle[] ServerHandleToLocal;
         int[] ServerPlayerToLocal;
 
-#if DEBUG
-        CySim fullSim;
+#if TEST_SIM
         SharpDX.Direct3D11.RenderTargetView renderTarget;
         SharpDX.Direct3D11.ShaderResourceView renderView;
 #endif
@@ -335,8 +334,7 @@ namespace cyFight
         {
             load_em = em;
             sim = new CySim();
-#if DEBUG
-            fullSim = new CySim();
+#if TEST_SIM
             SharpDX.Direct3D11.Texture2D renderTex = new SharpDX.Direct3D11.Texture2D(renderer.Device,
                 new SharpDX.Direct3D11.Texture2DDescription()
                 {
@@ -353,7 +351,7 @@ namespace cyFight
                 });
             renderTarget = new SharpDX.Direct3D11.RenderTargetView(renderer.Device, renderTex);
             renderView = new SharpDX.Direct3D11.ShaderResourceView(renderer.Device, renderTex);
-            em.addDraw2D(-10000, DrawOtherWorld);
+            em.addDraw2D(10000, DrawOtherWorld);
 
             shader = renderer.Assets.GetShader(Renderer.DefaultAssets.SH_POS_TEX);
             buf = renderer.Assets.GetVertexBuffer(Renderer.DefaultAssets.VB_QUAD_POS_TEX_UNIT);
@@ -393,18 +391,29 @@ namespace cyFight
             }
         }
 
-#if DEBUG
+#if TEST_SIM
         Shader shader;
         VertexBuffer buf;
         SharpDX.Direct3D11.SamplerState sampler;
         ConstBuffer<Matrix> worldBuffer;
 
-        Vector2 position = new Vector2(0, 0);
+        Vector2 position = new Vector2(960, 540);
         Vector2 scale = new Vector2(960, 540);
-
+        bool DrawingMyself = false;
         void DrawOtherWorld()
         {
-            renderer.Context.ClearRenderTargetView(renderTarget, new SharpDX.Mathematics.Interop.RawColor4(0, 0, 0, 1f));
+            if (DrawingMyself)
+                return;
+
+            renderer.Context.OutputMerger.SetBlendState(null, null, -1);
+
+            sim.UseTestSim();
+            DrawingMyself = true;
+            stage.Draw(renderTarget, false);
+            DrawingMyself = false;
+            sim.UseNormalSim();
+
+            renderer.Context.OutputMerger.SetTargets(stage.renderView);
 
             shader.Bind(renderer.Context);
             renderer.Context.InputAssembler.SetVertexBuffers(0, buf.vbBinding);
@@ -472,11 +481,6 @@ namespace cyFight
                         EnsurePlayerCapacity(playerID);
                         ServerPlayerToLocal[playerID] = localID;
                         players.Add(new Player(sim, renderer, load_em, localID));
-
-#if DEBUG
-                        var hiddenID = fullSim.AddPlayer(new Vector3(posX, posY, posZ));
-                        Debug.Assert(localID == hiddenID, "Debug sim desynced from main sim -- player add IDs don't match");
-#endif
                     }
                     break;
                 case NetServerToClient.NEW_PLAYER_YOU:
@@ -530,44 +534,11 @@ namespace cyFight
             }
         }
 
-        struct PlayerState
-        {
-            public int playerID;
-            public BodyState player;
-            public BodyState hammer;
-            public HammerState hammerState;
-            public float hammerDT;
-            public PlayerInput input;
-
-            public PlayerState(int playerID, BodyState player, BodyState hammer, HammerState hammerState, float hammerDT,
-                PlayerInput input)
-            {
-                this.playerID = playerID;
-                this.player = player;
-                this.hammer = hammer;
-                this.hammerState = hammerState;
-                this.hammerDT = hammerDT;
-                this.input = input;
-            }
-        }
-
-        struct BodyState
-        {
-            public int bodyHandle;
-            public RigidPose pose;
-            public BodyVelocity velocity;
-
-            public BodyState(int handle, Vector3 pos, Quaternion ori, Vector3 linVel, Vector3 angVel)
-            {
-                this.bodyHandle = handle;
-                pose = new RigidPose(pos, ori);
-                velocity = new BodyVelocity(linVel, angVel);
-            }
-        }
-
         struct SimState
         {
             public int Frame;
+            public int numPlayerInput;
+            public QuickList<(int playerID, PlayerInput input)> playerInputs;
             public int numPlayers;
             public QuickList<PlayerState> playerStates;
             public int numBodies;
@@ -661,9 +632,11 @@ namespace cyFight
                             ref var cur = ref JitterBuffer[JitterBuffer.Count - 2 - i];
                             var statePlayers = state.playerStates;
                             var stateBodies = state.bodyStates;
+                            var stateInputs = state.playerInputs;
                             state = cur;
                             cur.playerStates = statePlayers;
                             cur.bodyStates = stateBodies;
+                            cur.playerInputs = stateInputs;
                             state = ref cur;
                         }
                     }
@@ -677,24 +650,40 @@ namespace cyFight
             }
 
             state.Frame = frame;
-            state.numPlayers = msg.ReadInt32();
+
+            state.numPlayerInput = msg.ReadInt16();
+            state.playerInputs.EnsureCapacity(state.numPlayerInput, sim.BufferPool);
+            state.playerInputs.Count = 0;
+            for (int i = 0; i < state.numPlayerInput; i++)
+            {
+                ref var pInput = ref state.playerInputs.AllocateUnsafely();
+                pInput.playerID = msg.ReadInt16();
+                NetInterop.ReadPlayerInput(ref pInput.input, msg);
+            }
+
+            state.numPlayers = msg.ReadInt16();
             state.playerStates.EnsureCapacity(state.numPlayers, sim.BufferPool);
             state.playerStates.Count = 0;
             for (int i = 0; i < state.numPlayers; i++)
             {
-                ReadPlayer(msg, ref state.playerStates.AllocateUnsafely());
+                NetInterop.ReadPlayer(msg, ref state.playerStates.AllocateUnsafely());
             }
-            state.numBodies = msg.ReadInt32();
+
+            state.numBodies = msg.ReadInt16();
             state.bodyStates.EnsureCapacity(state.numBodies, sim.BufferPool);
             state.bodyStates.Count = 0;
             for (int i = 0; i < state.numBodies; i++)
             {
-                ReadBody(msg, ref state.bodyStates.AllocateUnsafely());
+                NetInterop.ReadBody(msg, ref state.bodyStates.AllocateUnsafely());
             }
         }
 
         void ApplyState(ref SimState state)
         {
+            for (int i = 0; i < state.numPlayerInput; i++)
+            {
+
+            }
             for (int i = 0; i < state.numPlayers; i++)
             {
                 ref var pState = ref state.playerStates[i];
@@ -708,7 +697,6 @@ namespace cyFight
                 p.SetState(ref pState.player.pose, ref pState.player.velocity,
                     ref pState.hammer.pose, ref pState.hammer.velocity,
                     pState.hammerState, pState.hammerDT);
-                p.Input = pState.input;
             }
 
             for (int i = 0; i < state.numBodies; i++)
@@ -725,6 +713,40 @@ namespace cyFight
                 bodyRef.Pose = bState.pose;
                 bodyRef.Velocity = bState.velocity;
             }
+
+#if TEST_SIM
+            sim.UseTestSim();
+            for (int i = 0; i < state.numPlayers; i++)
+            {
+                ref var pState = ref state.playerStates[i];
+                var pID = ServerPlayerToLocal[pState.playerID];
+                if (pID < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a player ID from the server that we don't have an active map for.");
+                    continue;
+                }
+                var p = sim.GetPlayer(pID);
+                p.SetState(ref pState.player.pose, ref pState.player.velocity,
+                    ref pState.hammer.pose, ref pState.hammer.velocity,
+                    pState.hammerState, pState.hammerDT);
+            }
+
+            for (int i = 0; i < state.numBodies; i++)
+            {
+                ref var bState = ref state.bodyStates[i];
+                var bID = ServerHandleToLocal[bState.bodyHandle];
+                if (bID.Value < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a body ID from the server that we don't have an active map for.");
+                    continue;
+                }
+
+                var bodyRef = new BodyReference(bID, sim.Simulation.Bodies);
+                //bodyRef.Pose = bState.pose;
+                //bodyRef.Velocity = bState.velocity;
+            }
+            sim.UseNormalSim();
+#endif
         }
 
         void OnLevelData(NetIncomingMessage msg)
@@ -749,7 +771,9 @@ namespace cyFight
         void OnPlayerData(NetIncomingMessage msg, int playerID)
         {
             PlayerState playerState = default;
-            ReadPlayer(msg, ref playerState);
+            NetInterop.ReadPlayer(msg, ref playerState);
+            PlayerInput playerInput = default;
+            NetInterop.ReadPlayerInput(ref playerInput, msg);
 
             var localID = sim.AddPlayer(playerState.player.pose.Position);
 
@@ -760,7 +784,7 @@ namespace cyFight
             p.SetState(ref playerState.player.pose, ref playerState.player.velocity,
                 ref playerState.hammer.pose, ref playerState.hammer.velocity,
                 playerState.hammerState, playerState.hammerDT);
-            p.Input = playerState.input;
+            p.Input = playerInput;
 
             if (playerState.playerID == playerID)
             {
@@ -771,19 +795,6 @@ namespace cyFight
             {
                 players.Add(new Player(sim, renderer, load_em, localID));
             }
-        }
-
-        void ReadPlayer(NetIncomingMessage msg, ref PlayerState state)
-        {
-            state.playerID = msg.ReadInt32();
-
-            ReadBody(msg, ref state.player);
-            ReadBody(msg, ref state.hammer);
-
-            state.hammerState = (HammerState)msg.ReadByte();
-            state.hammerDT = msg.ReadFloat();
-
-            NetInterop.ReadPlayerInput(ref state.input, msg);
         }
 
         void OnBodyData(NetIncomingMessage msg)
@@ -829,7 +840,11 @@ namespace cyFight
                         specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(box);
-                        body = new BoxThingy(width, height, length, renderer, load_em);
+#if TEST_SIM
+                        var testIndex = sim.Test_Simulation.Shapes.Add(box);
+                        Debug.Assert(shapeIndex.Packed == testIndex.Packed);
+#endif
+                        body = new BoxThingy(width, height, length, renderer, load_em, sim);
                     }
                     break;
                 case BodyType.CYLINDER:
@@ -846,7 +861,11 @@ namespace cyFight
                         specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(cyl);
-                        body = new CylinderThingy(radius, length, renderer, load_em);
+#if TEST_SIM
+                        var testIndex = sim.Test_Simulation.Shapes.Add(cyl);
+                        Debug.Assert(shapeIndex.Packed == testIndex.Packed);
+#endif
+                        body = new CylinderThingy(radius, length, renderer, load_em, sim);
                     }
                     break;
                 default:
@@ -881,6 +900,14 @@ namespace cyFight
                         shapeIndex,
                         specMargin));
 
+#if TEST_SIM
+                    sim.Test_Simulation.Statics.Add(new StaticDescription(
+                        pos,
+                        ori,
+                        shapeIndex,
+                        specMargin));
+#endif
+
                     body.SetPose(pos, ori);
                 }
             }
@@ -889,7 +916,7 @@ namespace cyFight
                 for (int i = 0; i < count; i++)
                 {
                     BodyState bodyState = default;
-                    ReadBody(msg, ref bodyState);
+                    NetInterop.ReadBody(msg, ref bodyState);
 
                     BodyHandle myHandle = default;
                     if (mass == 0)
@@ -910,36 +937,34 @@ namespace cyFight
                             new BodyActivityDescription(0.01f)));
                     }
 
-                    body.SetHandle(myHandle, sim.Simulation);
+#if TEST_SIM
+                    BodyHandle testHandle = default;
+                    if (mass == 0)
+                    {
+                        testHandle = sim.Test_Simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                            bodyState.pose,
+                            bodyState.velocity,
+                            new CollidableDescription(shapeIndex, specMargin),
+                            new BodyActivityDescription(0.01f)));
+                    }
+                    else
+                    {
+                        testHandle = sim.Test_Simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                            bodyState.pose,
+                            bodyState.velocity,
+                            inertia,
+                            new CollidableDescription(shapeIndex, specMargin),
+                            new BodyActivityDescription(0.01f)));
+                    }
+                    Debug.Assert(myHandle.Value == testHandle.Value);
+#endif
+
+                    body.AddHandle(myHandle);
 
                     EnsureHandleCapacity(bodyState.bodyHandle);
                     ServerHandleToLocal[bodyState.bodyHandle] = myHandle;
                 }
             }
-        }
-
-        void ReadBody(NetIncomingMessage msg, ref BodyState state)
-        {
-            var handle = msg.ReadInt32();
-            var posX = msg.ReadFloat();
-            var posY = msg.ReadFloat();
-            var posZ = msg.ReadFloat();
-            var oriX = msg.ReadFloat();
-            var oriY = msg.ReadFloat();
-            var oriZ = msg.ReadFloat();
-            var oriW = msg.ReadFloat();
-            var velX = msg.ReadFloat();
-            var velY = msg.ReadFloat();
-            var velZ = msg.ReadFloat();
-            var aVelX = msg.ReadFloat();
-            var aVelY = msg.ReadFloat();
-            var aVelZ = msg.ReadFloat();
-
-            state = new BodyState(handle,
-                new Vector3(posX, posY, posZ),
-                new Quaternion(oriX, oriY, oriZ, oriW),
-                new Vector3(velX, velY, velZ),
-                new Vector3(aVelX, aVelY, aVelZ));
         }
 
         public void OnDisconnect()
@@ -1167,7 +1192,7 @@ namespace cyFight
         interface IBodyRenderer
         {
             void SetPose(Vector3 pos, Quaternion ori);
-            void SetHandle(BodyHandle handle, Simulation Simulation);
+            void AddHandle(BodyHandle handle);
         }
 
         static Color[] AcceptableColors = new Color[]
@@ -1186,10 +1211,13 @@ namespace cyFight
 
         class BoxThingy : IBodyRenderer
         {
-            List<BodyReference> bodyRefs;
+            List<BodyHandle> bodyRefs;
             Box_MRT box;
-            public BoxThingy(float width, float height, float length, Renderer renderer, EventManager em)
+            CySim sim;
+            public BoxThingy(float width, float height, float length, Renderer renderer, EventManager em, CySim sim)
             {
+                this.sim = sim;
+
                 box = new Box_MRT(renderer, null, 0);
                 box.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
                 box.scale = new Vector3(width, height, length);
@@ -1203,13 +1231,13 @@ namespace cyFight
                 box.rotation = Matrix3x3.CreateFromQuaternion(ori);
             }
 
-            public void SetHandle(BodyHandle handle, Simulation Simulation)
+            public void AddHandle(BodyHandle handle)
             {
                 if (bodyRefs == null)
                 {
-                    bodyRefs = new List<BodyReference>();
+                    bodyRefs = new List<BodyHandle>();
                 }
-                bodyRefs.Add(new BodyReference(handle, Simulation.Bodies));
+                bodyRefs.Add(handle);
             }
 
             void DrawMRT()
@@ -1218,7 +1246,7 @@ namespace cyFight
                 {
                     for (int i = 0; i < bodyRefs.Count; i++)
                     {
-                        var bodyRef = bodyRefs[i];
+                        var bodyRef = new BodyReference(bodyRefs[i], sim.Simulation.Bodies);
                         var pose = bodyRef.Pose;
 
                         box.position = pose.Position;
@@ -1235,10 +1263,13 @@ namespace cyFight
 
         class CylinderThingy : IBodyRenderer
         {
-            List<BodyReference> bodyRefs;
+            List<BodyHandle> bodyRefs;
             Cylinder_MRT cyl;
-            public CylinderThingy(float radius, float length, Renderer renderer, EventManager em)
+            CySim sim;
+
+            public CylinderThingy(float radius, float length, Renderer renderer, EventManager em, CySim sim)
             {
+                this.sim = sim;
                 cyl = new Cylinder_MRT(renderer, null, 0);
                 cyl.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
                 cyl.scale = new Vector3(radius, length, radius);
@@ -1252,13 +1283,13 @@ namespace cyFight
                 cyl.rotation = Matrix3x3.CreateFromQuaternion(ori);
             }
 
-            public void SetHandle(BodyHandle handle, Simulation Simulation)
+            public void AddHandle(BodyHandle handle)
             {
                 if (bodyRefs == null)
                 {
-                    bodyRefs = new List<BodyReference>();
+                    bodyRefs = new List<BodyHandle>();
                 }    
-                bodyRefs.Add(new BodyReference(handle, Simulation.Bodies));
+                bodyRefs.Add(handle);
             }
 
             void DrawMRT()
@@ -1267,7 +1298,7 @@ namespace cyFight
                 {
                     for (int i = 0; i < bodyRefs.Count; i++)
                     {
-                        var bodyRef = bodyRefs[i];
+                        var bodyRef = new BodyReference(bodyRefs[i], sim.Simulation.Bodies);
                         var pose = bodyRef.Pose;
 
                         cyl.position = pose.Position;
@@ -1281,28 +1312,5 @@ namespace cyFight
                 }
             }
         }
-
-        class MagicBox
-        {
-            BodyReference bodyRef;
-            Cylinder_MRT box;
-
-            public MagicBox(Simulation simulation, Renderer renderer, EventManager em, BodyHandle handle)
-            {
-                box = new Cylinder_MRT(renderer, em, 0);
-                box.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
-                box.scale = new Vector3(1f, 1f, 1f);
-                em.addUpdateListener(0, Update);
-
-                bodyRef = simulation.Bodies.GetBodyReference(handle);
-            }
-
-            void Update(float dt)
-            {
-                box.position = bodyRef.Pose.Position;
-                box.rotation = Matrix3x3.CreateFromQuaternion(bodyRef.Pose.Orientation);
-            }
-        }
-
     }
 }

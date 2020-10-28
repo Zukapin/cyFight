@@ -127,7 +127,7 @@ namespace cyServer
                 for (int i = 0; i < count; i++)
                 {
                     var handle = handles[i];
-                    Network.SerializeBody(handle, Simulation, msg);
+                    NetInterop.SerializeBody(handle, Simulation, msg);
                 }
             }
         }
@@ -230,7 +230,7 @@ namespace cyServer
                 for (int i = 0; i < count; i++)
                 {
                     var handle = handles[i];
-                    Network.SerializeBody(handle, Simulation, msg);
+                    NetInterop.SerializeBody(handle, Simulation, msg);
                 }
             }
         }
@@ -250,6 +250,99 @@ namespace cyServer
         public abstract void Update(float dt);
     }
 
+    struct PriorityQueue : IComparer<int>
+    {
+        int Capacity;
+        public int Count;
+        public float[] Priorities;
+        int[] SortedIndexes;
+        int SortedUsed;
+
+        public void EnsureCapacity(int NewCapacity)
+        {
+            if (NewCapacity > Capacity)
+            {
+                int newCap = Math.Max(Capacity * 2, NewCapacity);
+                Array.Resize(ref Priorities, newCap);
+                Array.Resize(ref SortedIndexes, newCap);
+
+                Capacity = newCap;
+            }
+        }
+
+        public void AddIndex(int i)
+        {
+#if DEBUG
+            for (int t = 0; t < Count; t++)
+            {
+                Debug.Assert(SortedIndexes[t] != i);
+            }
+#endif
+            Debug.Assert(i >= 0 && i < Capacity);
+            Debug.Assert(Count < Capacity);
+            SortedIndexes[Count] = i;
+            Priorities[i] = 0;
+            Count++;
+        }
+
+        public void RemoveIndex(int i)
+        {
+            Debug.Assert(i >= 0 && i < Capacity);
+#if DEBUG
+            bool found = false;
+#endif
+            for (int t = 0; t < Count; t++)
+            {
+                if (SortedIndexes[t] == i)
+                {
+                    SortedIndexes[t] = SortedIndexes[Count];
+#if DEBUG
+                    found = true;
+#endif
+                    break;
+                }
+            }
+
+#if DEBUG
+            Debug.Assert(found);
+#endif
+            Count--;
+        }
+
+        public void Clear()
+        {
+            Count = 0;
+        }
+
+        public float PeekPrioriy(int i)
+        {
+            Debug.Assert(SortedUsed == 0);
+            Debug.Assert(i < Count);
+            return Priorities[SortedIndexes[i]];
+        }
+
+        public int Pop()
+        {
+            Debug.Assert(SortedUsed < Count);
+            var toRet = SortedIndexes[SortedUsed++];
+            Priorities[toRet] = 0;
+            return toRet;
+        }
+
+        public void Sort()
+        {
+            SortedUsed = 0;
+            Array.Sort(SortedIndexes, 0, Count, this);
+        }
+
+        public int Compare(int x, int y)
+        {//don't use this for anything other than the array sort please
+            Debug.Assert(x >= 0 && x < Capacity);
+            Debug.Assert(y >= 0 && y < Capacity);
+            return Math.Sign(Priorities[x] - Priorities[y]);
+        }
+    }
+
     class LevelOne : Level
     {
         Network Network;
@@ -265,6 +358,22 @@ namespace cyServer
         struct ServerPlayerData
         {
             public int LatestInputFrame;
+            public PriorityQueue PlayerInputPriorities;
+            public PriorityQueue PlayerBodyPriorities;
+            public PriorityQueue BodyPriorities;
+
+            public void Clear()
+            {
+                LatestInputFrame = -1;
+                PlayerInputPriorities.Clear();
+                PlayerBodyPriorities.Clear();
+                BodyPriorities.Clear();
+            }
+            public void EnsurePlayerCapacity(int capacity)
+            {
+                PlayerInputPriorities.EnsureCapacity(capacity);
+                PlayerBodyPriorities.EnsureCapacity(capacity);
+            }
         }
         ServerPlayerData[] PlayerData;
 
@@ -327,6 +436,11 @@ namespace cyServer
                 int newSize = Math.Max(capacity, PlayerData.Length * 2);
                 Array.Resize(ref PlayerData, newSize);
             }
+
+            foreach (var pID in sim.PlayerIDs)
+            {
+                PlayerData[pID].EnsurePlayerCapacity(capacity);
+            }
         }
 
         void SerializeAll(NetOutgoingMessage msg)
@@ -340,10 +454,9 @@ namespace cyServer
             }
 
             msg.Write(sim.PlayerCount);
-            for (int i = 0; i <= sim.HighestPlayerID; i++)
+            foreach (var i in sim.PlayerIDs)
             {
-                if (sim.PlayerExists(i))
-                    Network.SerializePlayer(i, sim, msg);
+                NetInterop.SerializePlayer(i, sim, msg);
             }
         }
 
@@ -355,7 +468,7 @@ namespace cyServer
             var playerID = sim.AddPlayer(startPos);
             conn.Tag = playerID;
             EnsurePlayerSize(playerID);
-            PlayerData[playerID] = default;
+            PlayerData[playerID].Clear();
 
             var msgToNewPlayer = Network.CreateMessage();
             msgToNewPlayer.Write((int)NetServerToClient.NEW_PLAYER_YOU);
@@ -462,19 +575,24 @@ namespace cyServer
                 var msg = Network.CreateMessage();
                 msg.Write((int)NetServerToClient.STATE_UPDATE);
                 msg.Write(sim.CurrentFrame);
-                msg.Write(sim.PlayerCount);
-                for (int i = 0; i <= sim.HighestPlayerID; i++)
+                msg.Write((short)sim.PlayerCount);
+                foreach (var i in sim.PlayerIDs)
                 {
-                    if (sim.PlayerExists(i))
-                    {
-                        Network.SerializePlayer(i, sim, msg);
-                    }
+                    var p = sim.GetPlayer(i);
+                    msg.Write((short)i);
+                    NetInterop.SerializePlayerInput(ref p.Input, msg);
                 }
-                msg.Write(dynBodies.Count);
+                msg.Write((short)sim.PlayerCount);
+                foreach (var i in sim.PlayerIDs)
+                {
+                    NetInterop.SerializePlayer(i, sim, msg);
+                }
+                msg.Write((short)dynBodies.Count);
                 for (int i = 0; i < dynBodies.Count; i++)
                 {
-                    Network.SerializeBody(dynBodies[i], sim.Simulation, msg);
+                    NetInterop.SerializeBody(dynBodies[i], sim.Simulation, msg);
                 }
+
                 //note: can check individual connection MTU with conn.CurrentMTU, but it will essentially always be 1500 so whatever
                 //Debug.Assert(msg.LengthBytes <= 1500, "Player state update is larger than network MTU");
                 Network.Send(msg, connections, NetDeliveryMethod.Unreliable, 0);

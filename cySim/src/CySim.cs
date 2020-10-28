@@ -17,8 +17,8 @@ namespace cySim
     public class CySim
     {
         public BufferPool BufferPool { get; private set; }
-        CharacterControllers characters;
         public Simulation Simulation { get; private set; }
+        CharacterControllers characters;
         SimpleThreadDispatcher ThreadDispatcher;
 
         int numPlayers;
@@ -26,6 +26,23 @@ namespace cySim
         CharacterInput[] players;
 
         public int CurrentFrame { get; private set; }
+
+#if TEST_SIM
+        public Simulation Normal_Simulation { get; private set; }
+        public Simulation Test_Simulation { get; private set; }
+        CharacterControllers Test_Characters;
+        CharacterInput[] Test_Players;
+
+        public void UseNormalSim()
+        {
+            Simulation = Normal_Simulation;
+        }
+        public void UseTestSim()
+        {
+            Simulation = Test_Simulation;
+        }
+#else
+#endif
 
         public CySim()
         {
@@ -49,6 +66,17 @@ namespace cySim
 
             playerIDToPlayer = new IdPool(128, BufferPool);
             players = new CharacterInput[128];
+
+#if TEST_SIM
+            Normal_Simulation = Simulation;
+            Test_Characters = new CharacterControllers(BufferPool);
+            Test_Players = new CharacterInput[players.Length];
+            Test_Simulation = Simulation.Create(
+                BufferPool,
+                new CyNarrowphaseCallbacks(Test_Characters),
+                new CyIntegratorCallbacks(new Vector3(0, -10, 0)),
+                new PositionFirstTimestepper());
+#endif
         }
 
         public int AddPlayer(Vector3 startPos)
@@ -60,6 +88,11 @@ namespace cySim
             Debug.Assert(players[id] == null, "Player ID has been assigned to a non-null player.");
             players[id] = newChar;
             numPlayers++;
+
+#if TEST_SIM
+            var testChar = new CharacterInput(Test_Characters, startPos, new Capsule(0.5f, 1), 0.1f, 1f, 15f, 10f, 6f, 4f);
+            Test_Players[id] = testChar;
+#endif
             return id;
         }
 
@@ -78,21 +111,38 @@ namespace cySim
                     {
                         players[i] = oldPlayers[i];
                     }
+
+#if TEST_SIM
+                    oldPlayers = Test_Players;
+                    Test_Players = new CharacterInput[playerIDToPlayer.Capacity];
+                    for (int i = 0; i < oldCap; i++)
+                    {
+                        Test_Players[i] = oldPlayers[i];
+                    }
+#endif
                 }
             }
+
         }
 
         public int PlayerCount { get { return numPlayers; } }
-        public int HighestPlayerID { get { return playerIDToPlayer.HighestPossiblyClaimedId; } }
 
         public CharacterInput GetPlayer(int playerID)
         {
             Debug.Assert(players[playerID] != null, "Trying to access a player ID that doesn't exist");
+#if TEST_SIM
+            if (Simulation == Test_Simulation)
+                return Test_Players[playerID];
+#endif
             return players[playerID];
         }
 
         public bool PlayerExists(int playerID)
         {
+#if TEST_SIM
+            if (Simulation == Test_Simulation)
+                return Test_Players[playerID] != null;
+#endif
             return players[playerID] != null;
         }
 
@@ -100,14 +150,47 @@ namespace cySim
         {
             get
             {
-                for (int i = 0; i <= HighestPlayerID; i++)
+                for (int i = 0; i <= playerIDToPlayer.HighestPossiblyClaimedId; i++)
                 {
                     var p = players[i];
                     if (p != null)
+                    {
                         yield return p;
+                    }
                 }
             }
         }
+
+        public IEnumerable<int> PlayerIDs
+        {
+            get
+            {
+                for (int i = 0; i <= playerIDToPlayer.HighestPossiblyClaimedId; i++)
+                {
+                    if (players[i] != null)
+                    {
+                        yield return i;
+                    }
+                }
+            }
+        }
+
+#if TEST_SIM
+        public IEnumerable<CharacterInput> TestPlayers
+        {
+            get
+            {
+                for (int i = 0; i <= playerIDToPlayer.HighestPossiblyClaimedId; i++)
+                {
+                    var p = players[i];
+                    if (p != null)
+                    {
+                        yield return Test_Players[i];
+                    }
+                }
+            }
+        }
+#endif
 
         public void RemovePlayer(int playerID)
         {
@@ -116,6 +199,11 @@ namespace cySim
             players[playerID] = null;
             playerIDToPlayer.Return(playerID, BufferPool);
             numPlayers--;
+
+#if TEST_SIM
+            Test_Players[playerID].Dispose();
+            Test_Players[playerID] = null;
+#endif
         }
 
         public void Update(float dt)
@@ -126,6 +214,13 @@ namespace cySim
             }
 
             Simulation.Timestep(dt, ThreadDispatcher);
+#if TEST_SIM
+            foreach (var p in TestPlayers)
+            {
+                p.UpdateCharacterGoals(dt);
+            }
+            Test_Simulation.Timestep(dt, ThreadDispatcher);
+#endif
 
             CurrentFrame++;
         }
