@@ -9,8 +9,7 @@
   </PropertyGroup>
   
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
-    <DefineConstants>DEBUG</DefineConstants>
-    <DefineConstants>TEST_SIM</DefineConstants>
+    <DefineConstants>DEBUG;TEST_SIM</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

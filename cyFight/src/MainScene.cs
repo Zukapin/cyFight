@@ -682,7 +682,15 @@ namespace cyFight
         {
             for (int i = 0; i < state.numPlayerInput; i++)
             {
-
+                ref var iState = ref state.playerInputs[i];
+                var pID = ServerPlayerToLocal[iState.playerID];
+                if (pID < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a player ID from the server that we don't have an active map for.");
+                    continue;
+                }
+                var p = sim.GetPlayer(pID);
+                p.Input = iState.input;
             }
             for (int i = 0; i < state.numPlayers; i++)
             {
@@ -716,6 +724,18 @@ namespace cyFight
 
 #if TEST_SIM
             sim.UseTestSim();
+            for (int i = 0; i < state.numPlayerInput; i++)
+            {
+                ref var iState = ref state.playerInputs[i];
+                var pID = ServerPlayerToLocal[iState.playerID];
+                if (pID < 0)
+                {
+                    Logger.WriteLine(LogType.DEBUG, "Recieved a player ID from the server that we don't have an active map for.");
+                    continue;
+                }
+                var p = sim.GetPlayer(pID);
+                p.Input = iState.input;
+            }
             for (int i = 0; i < state.numPlayers; i++)
             {
                 ref var pState = ref state.playerStates[i];
@@ -742,8 +762,8 @@ namespace cyFight
                 }
 
                 var bodyRef = new BodyReference(bID, sim.Simulation.Bodies);
-                //bodyRef.Pose = bState.pose;
-                //bodyRef.Velocity = bState.velocity;
+                bodyRef.Pose = bState.pose;
+                bodyRef.Velocity = bState.velocity;
             }
             sim.UseNormalSim();
 #endif

@@ -8,6 +8,8 @@ using System.Runtime.CompilerServices;
 using Lidgren.Network;
 using BepuPhysics;
 using System.Numerics;
+using Microsoft.VisualBasic;
+using System.Diagnostics;
 
 namespace cySim
 {
@@ -71,9 +73,14 @@ namespace cySim
 
     public abstract class NetInterop
     {
+        public const int PlayerSerializationSize = BodySerializationSize * 2 + 9;
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void SerializePlayer(int i, CySim sim, NetOutgoingMessage msg)
         {
+#if DEBUG
+            int msgStart = msg.LengthBytes;
+#endif
+
             var p = sim.GetPlayer(i);
             msg.Write(i);
             SerializeBody(p.BodyHandle, sim.Simulation, msg);
@@ -82,6 +89,10 @@ namespace cySim
             ref var h = ref p.Hammer;
             msg.Write((byte)h.HammerState);
             msg.Write(h.HammerDT);
+#if DEBUG
+            int msgEnd = msg.LengthBytes;
+            Debug.Assert(msgEnd - msgStart == PlayerSerializationSize, "The const PlayerSerializationSize is incorrect");
+#endif
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -96,12 +107,16 @@ namespace cySim
             state.hammerDT = msg.ReadFloat();
         }
 
+        public const int BodySerializationSize = 56;
         /// <summary>
         /// Serializes a dynamic body's current state -- position, orientation, linear velocity, angular velocity
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void SerializeBody(BodyHandle handle, Simulation Simulation, NetOutgoingMessage msg)
         {
+#if DEBUG
+            int msgStart = msg.LengthBytes;
+#endif
             var bodyRef = new BodyReference(handle, Simulation.Bodies);
             var pose = bodyRef.Pose;
             var vel = bodyRef.Velocity;
@@ -120,6 +135,10 @@ namespace cySim
             msg.Write(vel.Angular.X);
             msg.Write(vel.Angular.Y);
             msg.Write(vel.Angular.Z);
+#if DEBUG
+            int msgEnd = msg.LengthBytes;
+            Debug.Assert(msgEnd - msgStart == BodySerializationSize, "The const BodySerializationSize is incorrect");
+#endif
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -147,9 +166,13 @@ namespace cySim
                 new Vector3(aVelX, aVelY, aVelZ));
         }
 
+        public const int PlayerInputSerializationSize = 13;
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void SerializePlayerInput(ref PlayerInput input, NetOutgoingMessage msg)
         {
+#if DEBUG
+            int msgStart = msg.LengthBytes;
+#endif
             msg.Write(input.MoveForward);
             msg.Write(input.MoveBackward);
             msg.Write(input.MoveLeft);
@@ -161,6 +184,11 @@ namespace cySim
             msg.Write(input.ViewDirection.X);
             msg.Write(input.ViewDirection.Y);
             msg.Write(input.ViewDirection.Z);
+
+#if DEBUG
+            int msgEnd = msg.LengthBytes;
+            Debug.Assert(msgEnd - msgStart == PlayerInputSerializationSize, "The const PlayerInputSerializationSize is incorrect");
+#endif
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
