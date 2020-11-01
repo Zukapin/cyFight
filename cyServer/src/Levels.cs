@@ -636,6 +636,11 @@ namespace cyServer
 
         void UpdatePriorities()
         {
+            //notes for further improvements for state updates:
+            //ideas ordered based on expected payoff
+            //massively shrink the player input size -- 1or2 byte for playerID, 1 byte for input, 2 bytes for yaw, for 4-5 bytes down from 15 -- can do 100 players and only take 1/3rd of the buffer
+            //add priority per dyn body based on total impulse size per frame -- should capture the 'diverging' events better, could also direct-priority hammerhits
+            //add priority based on distance -- just doing straight distancedsquared checks probably best, norbo says should be ezfast, can split distance updates over multipleframes
             foreach (var pID in sim.PlayerIDs)
             {
                 var p = PlayerData[pID];
