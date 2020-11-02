@@ -50,6 +50,12 @@ namespace cyFight
             config.UnreliableSizeBehaviour = NetUnreliableSizeBehaviour.IgnoreMTU;
             config.UseMessageRecycling = true;
 
+#if TEST_SIM
+            config.AutoExpandMTU = false;
+            config.MaximumTransmissionUnit = 8190;
+            config.UnreliableSizeBehaviour = NetUnreliableSizeBehaviour.NormalFragmentation;
+#endif
+
 #if DEBUG
             config.SimulatedDuplicatesChance = 0.0f; //0-1f
             config.SimulatedLoss = 0.0f; //0-1f

@@ -413,7 +413,7 @@ namespace cyServer
             var cylIndex = Simulation.Shapes.Add(cylShape);
 
             const int pyramidCount = 1;
-            const int rowCount = 20;
+            const int rowCount = 15;
             var cylinders = new List<BodyHandle>();
             for (int pyramidIndex = 0; pyramidIndex < pyramidCount; ++pyramidIndex)
             {
@@ -670,7 +670,9 @@ namespace cyServer
 
                 var msg = Network.CreateMessage();
                 WriteMessage(p, MTU, msg);
-                //WriteAll(msg);
+#if TEST_SIM
+                WriteAll(msg);
+#endif
 
                 Network.Send(msg, p.Conn, NetDeliveryMethod.Unreliable, 0);
             }
@@ -784,11 +786,6 @@ namespace cyServer
                 var bID = p.BodyPriorities.Pop();
                 NetInterop.SerializeBody(new BodyHandle(bID), sim.Simulation, msg);
             }
-        }
-
-        static int Test()
-        {
-            return 0;
         }
     }
 }

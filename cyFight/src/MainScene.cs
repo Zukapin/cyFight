@@ -543,6 +543,15 @@ namespace cyFight
             public QuickList<PlayerState> playerStates;
             public int numBodies;
             public QuickList<BodyState> bodyStates;
+
+#if TEST_SIM
+            public int TestNumPlayerInput;
+            public QuickList<(int playerID, PlayerInput input)> TestPlayerInputs;
+            public int TestNumPlayers;
+            public QuickList<PlayerState> TestPlayerStates;
+            public int TestNumBodies;
+            public QuickList<BodyState> TestBodyStates;
+#endif
         }
 
         RingBuffer<SimState> JitterBuffer = new RingBuffer<SimState>(32); //about 500ms of state
@@ -633,10 +642,20 @@ namespace cyFight
                             var statePlayers = state.playerStates;
                             var stateBodies = state.bodyStates;
                             var stateInputs = state.playerInputs;
+#if TEST_SIM
+                            var TestStatePlayers = state.TestPlayerStates;
+                            var TestStateBodies = state.TestBodyStates;
+                            var TestStateInputs = state.TestPlayerInputs;
+#endif
                             state = cur;
                             cur.playerStates = statePlayers;
                             cur.bodyStates = stateBodies;
                             cur.playerInputs = stateInputs;
+#if TEST_SIM
+                            cur.TestPlayerStates = TestStatePlayers;
+                            cur.TestBodyStates = TestStateBodies;
+                            cur.TestPlayerInputs = TestStateInputs;
+#endif
                             state = ref cur;
                         }
                     }
@@ -676,6 +695,36 @@ namespace cyFight
             {
                 NetInterop.ReadBody(msg, ref state.bodyStates.AllocateUnsafely());
             }
+
+#if TEST_SIM
+            msg.ReadInt32();
+            msg.ReadInt32();
+            state.TestNumPlayerInput = msg.ReadInt16();
+            state.TestPlayerInputs.EnsureCapacity(state.TestNumPlayerInput, sim.BufferPool);
+            state.TestPlayerInputs.Count = 0;
+            for (int i = 0; i < state.TestNumPlayerInput; i++)
+            {
+                ref var pInput = ref state.TestPlayerInputs.AllocateUnsafely();
+                pInput.playerID = msg.ReadInt16();
+                NetInterop.ReadPlayerInput(ref pInput.input, msg);
+            }
+
+            state.TestNumPlayers = msg.ReadInt16();
+            state.TestPlayerStates.EnsureCapacity(state.TestNumPlayers, sim.BufferPool);
+            state.TestPlayerStates.Count = 0;
+            for (int i = 0; i < state.TestNumPlayers; i++)
+            {
+                NetInterop.ReadPlayer(msg, ref state.TestPlayerStates.AllocateUnsafely());
+            }
+
+            state.TestNumBodies = msg.ReadInt16();
+            state.TestBodyStates.EnsureCapacity(state.TestNumBodies, sim.BufferPool);
+            state.TestBodyStates.Count = 0;
+            for (int i = 0; i < state.TestNumBodies; i++)
+            {
+                NetInterop.ReadBody(msg, ref state.TestBodyStates.AllocateUnsafely());
+            }
+#endif
         }
 
         void ApplyState(ref SimState state)
@@ -724,9 +773,9 @@ namespace cyFight
 
 #if TEST_SIM
             sim.UseTestSim();
-            for (int i = 0; i < state.numPlayerInput; i++)
+            for (int i = 0; i < state.TestNumPlayerInput; i++)
             {
-                ref var iState = ref state.playerInputs[i];
+                ref var iState = ref state.TestPlayerInputs[i];
                 var pID = ServerPlayerToLocal[iState.playerID];
                 if (pID < 0)
                 {
@@ -736,9 +785,9 @@ namespace cyFight
                 var p = sim.GetPlayer(pID);
                 p.Input = iState.input;
             }
-            for (int i = 0; i < state.numPlayers; i++)
+            for (int i = 0; i < state.TestNumPlayers; i++)
             {
-                ref var pState = ref state.playerStates[i];
+                ref var pState = ref state.TestPlayerStates[i];
                 var pID = ServerPlayerToLocal[pState.playerID];
                 if (pID < 0)
                 {
@@ -751,9 +800,9 @@ namespace cyFight
                     pState.hammerState, pState.hammerDT);
             }
 
-            for (int i = 0; i < state.numBodies; i++)
+            for (int i = 0; i < state.TestNumBodies; i++)
             {
-                ref var bState = ref state.bodyStates[i];
+                ref var bState = ref state.TestBodyStates[i];
                 var bID = ServerHandleToLocal[bState.bodyHandle];
                 if (bID.Value < 0)
                 {
