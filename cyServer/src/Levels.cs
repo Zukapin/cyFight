@@ -22,341 +22,22 @@ using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using cyUtility;
 using System.Transactions;
+using System.Threading;
 
 namespace cyServer
 {
-    //serialization descriptions for "normal" simulation bodies
-    //anything with complicated constraints or other game logic will have to be serialized separately (like characters)
-    
-    interface IBodyDesc
-    {
-        void Serialize(NetOutgoingMessage msg, Simulation Simulation);
-    }
-
-    struct BoxDesc : IBodyDesc
-    {
-        Vector3 shape;
-        float mass;
-        float specMargin;
-
-        bool IsStatic;
-        int count;
-        List<RigidPose> poses;
-        List<BodyHandle> handles;
-
-        public BoxDesc(Simulation Simulation, Vector3 shape, float specMargin, Vector3 pos, Quaternion orientation)
-        {
-            IsStatic = true;
-            this.shape = shape;
-            this.specMargin = specMargin;
-            poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
-
-            count = 1;
-            handles = default;
-            mass = 0;
-
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z)), specMargin)));
-        }
-
-        public BoxDesc(Simulation Simulation, Vector3 shape, float specMargin, List<RigidPose> poses)
-        {
-            IsStatic = true;
-            this.shape = shape;
-            this.specMargin = specMargin;
-            this.poses = poses;
-
-            count = poses.Count;
-            handles = default;
-            mass = 0;
-
-            var shapeIndex = Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z));
-            for (int i = 0; i < count; i++)
-            {
-                var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
-            }
-        }
-
-        public BoxDesc(Vector3 shape, float mass, float specMargin, List<BodyHandle> handles)
-        {
-            IsStatic = false;
-            this.shape = shape;
-            this.mass = mass;
-            this.specMargin = specMargin;
-            this.handles = handles;
-
-            count = handles.Count;
-            poses = default;
-        }
-
-        public void Serialize(NetOutgoingMessage msg, Simulation Simulation)
-        {
-            if (count > 1)
-                msg.Write((byte)BodyType.MULTI);
-
-            if (IsStatic)
-            {
-                msg.Write((byte)(BodyType.STATIC | BodyType.BOX));
-                msg.Write(shape.X);
-                msg.Write(shape.Y);
-                msg.Write(shape.Z);
-                msg.Write(specMargin);
-                if (count > 1)
-                    msg.Write(count);
-                for (int i = 0; i < count; i++)
-                {
-                    var pose = poses[i];
-                    msg.Write(pose.Position.X);
-                    msg.Write(pose.Position.Y);
-                    msg.Write(pose.Position.Z);
-                    msg.Write(pose.Orientation.X);
-                    msg.Write(pose.Orientation.Y);
-                    msg.Write(pose.Orientation.Z);
-                    msg.Write(pose.Orientation.W);
-                }
-            }
-            else
-            {
-                msg.Write((byte)BodyType.BOX);
-                msg.Write(shape.X);
-                msg.Write(shape.Y);
-                msg.Write(shape.Z);
-                msg.Write(mass);
-                msg.Write(specMargin);
-                if (count > 1)
-                    msg.Write(count);
-                for (int i = 0; i < count; i++)
-                {
-                    var handle = handles[i];
-                    NetInterop.SerializeBody(handle, Simulation, msg);
-                }
-            }
-        }
-    }
-
-    struct CylinderDesc : IBodyDesc
-    {
-        float radius;
-        float length;
-        float specMargin;
-        float mass;
-
-        bool IsStatic;
-        int count;
-        List<RigidPose> poses;
-        List<BodyHandle> handles;
-
-        public CylinderDesc(Simulation Simulation, float radius, float length, float specMargin, Vector3 pos, Quaternion orientation)
-        {
-            IsStatic = true;
-            this.radius = radius;
-            this.length = length;
-            this.specMargin = specMargin;
-            poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
-
-            count = 1;
-            handles = default;
-            mass = 0;
-
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Cylinder(radius, length)), specMargin)));
-        }
-
-        public CylinderDesc(Simulation Simulation, float radius, float length, float specMargin, List<RigidPose> poses)
-        {
-            IsStatic = true;
-            this.radius = radius;
-            this.length = length;
-            this.specMargin = specMargin;
-            this.poses = poses;
-
-            count = poses.Count;
-            handles = default;
-            mass = 0;
-
-            var shapeIndex = Simulation.Shapes.Add(new Cylinder(radius, length));
-            for (int i = 0; i < count; i++)
-            {
-                var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
-            }
-        }
-
-        public CylinderDesc(float radius, float length, float mass, float specMargin, List<BodyHandle> handles)
-        {
-            IsStatic = false;
-            this.radius = radius;
-            this.length = length;
-            this.mass = mass;
-            this.specMargin = specMargin;
-            this.handles = handles;
-
-            count = handles.Count;
-            poses = default;
-        }
-
-        public void Serialize(NetOutgoingMessage msg, Simulation Simulation)
-        {
-            if (count > 1)
-                msg.Write((byte)BodyType.MULTI);
-
-            if (IsStatic)
-            {
-                msg.Write((byte)(BodyType.STATIC | BodyType.CYLINDER));
-                msg.Write(radius);
-                msg.Write(length);
-                msg.Write(specMargin);
-                if (count > 1)
-                    msg.Write(count);
-                for (int i = 0; i < count; i++)
-                {
-                    var pose = poses[i];
-                    msg.Write(pose.Position.X);
-                    msg.Write(pose.Position.Y);
-                    msg.Write(pose.Position.Z);
-                    msg.Write(pose.Orientation.X);
-                    msg.Write(pose.Orientation.Y);
-                    msg.Write(pose.Orientation.Z);
-                    msg.Write(pose.Orientation.W);
-                }
-            }
-            else
-            {
-                msg.Write((byte)BodyType.CYLINDER);
-                msg.Write(radius);
-                msg.Write(length);
-                msg.Write(mass);
-                msg.Write(specMargin);
-                if (count > 1)
-                    msg.Write(count);
-                for (int i = 0; i < count; i++)
-                {
-                    var handle = handles[i];
-                    NetInterop.SerializeBody(handle, Simulation, msg);
-                }
-            }
-        }
-    }
-
     abstract class Level
     {
-        public static Level LoadLevel(int i, Network Network)
-        {
-            return new LevelOne(Network);
-        }
-
-        public abstract void OnConnect(NetConnection conn);
-        public abstract void OnDisconnect(NetConnection conn);
-        public abstract void OnData(NetIncomingMessage msg);
-
-        public abstract void Update(float dt);
-    }
-
-    struct PriorityQueue : IComparer<int>
-    {
-        int Capacity;
-        public int Count;
-        public float[] Priorities;
-        int[] SortedIndexes;
-        int SortedUsed;
-
-        public void EnsureCapacity(int NewCapacity)
-        {
-            if (NewCapacity > Capacity)
-            {
-                int newCap = Math.Max(Capacity * 2, NewCapacity);
-                Array.Resize(ref Priorities, newCap);
-                Array.Resize(ref SortedIndexes, newCap);
-
-                Capacity = newCap;
-            }
-        }
-
-        public void AddIndex(int i)
-        {
-#if DEBUG
-            for (int t = 0; t < Count; t++)
-            {
-                Debug.Assert(SortedIndexes[t] != i, "Index already exists in this priority queue");
-            }
-#endif
-            Debug.Assert(i >= 0 && i < Capacity, "Index must be greater than 0 and less than capacity" + i + " " + Capacity);
-            Debug.Assert(Count < Capacity, "Current count is already at capacity");
-            SortedIndexes[Count] = i;
-            Priorities[i] = 0;
-            Count++;
-        }
-
-        public void RemoveIndex(int i)
-        {
-            Debug.Assert(i >= 0 && i < Capacity);
-#if DEBUG
-            bool found = false;
-#endif
-            for (int t = 0; t < Count; t++)
-            {
-                if (SortedIndexes[t] == i)
-                {
-                    SortedIndexes[t] = SortedIndexes[Count - 1];
-#if DEBUG
-                    found = true;
-#endif
-                    break;
-                }
-            }
-
-#if DEBUG
-            Debug.Assert(found);
-#endif
-            Count--;
-        }
-
-        public void Clear()
-        {
-            Count = 0;
-        }
-
-        public float PeekPrioriy(int i)
-        {
-            Debug.Assert(SortedUsed == 0);
-            Debug.Assert(i < Count);
-            return Priorities[SortedIndexes[i]];
-        }
-
-        public int Pop()
-        {
-            Debug.Assert(SortedUsed < Count);
-            var toRet = SortedIndexes[SortedUsed++];
-            Priorities[toRet] = 0;
-            return toRet;
-        }
-
-        public void Sort()
-        {
-            //theoretically could pass in the max number of items we'll ever pull from this list, based on MTU size
-            //and then only do a partial sort
-            SortedUsed = 0;
-            Array.Sort(SortedIndexes, 0, Count, this);
-        }
-
-        public int Compare(int x, int y)
-        {//don't use this for anything other than the array sort please
-            Debug.Assert(x >= 0 && x < Capacity);
-            Debug.Assert(y >= 0 && y < Capacity);
-            return Math.Sign(Priorities[y] - Priorities[x]);
-        }
-    }
-
-    class LevelOne : Level
-    {
-        Network Network;
-        CySim sim;
-        Simulation Simulation { get { return sim.Simulation; } }
+        protected Network Network;
+        protected CySim sim;
+        protected Simulation Simulation { get { return sim.Simulation; } }
         List<IBodyDesc> bodyDesc;
 
         Random Random = new Random();
         List<NetConnection> connections = new List<NetConnection>();
 
         QuickList<BodyHandle> dynBodies;
+        QuickList<BodyHandle> kinBodies;
 
         struct ServerPlayerData
         {
@@ -393,54 +74,22 @@ namespace cyServer
         }
         ServerPlayerData[] PlayerData;
 
-        public LevelOne(Network Network)
+        public Level(Network Network)
         {
             this.Network = Network;
             sim = new CySim();
             sim.Init();
 
-            dynBodies = new QuickList<BodyHandle>(1024, sim.BufferPool);
             bodyDesc = new List<IBodyDesc>();
-            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2500, 1, 2500), 0.1f, new Vector3(0, -0.5f, 0), Quaternion.Identity));
-            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2, 1, 2), 0.1f, new Vector3(0, 0.5f, 30), Quaternion.Identity));
-
-            float cylRadius = 1;
-            float cylLength = 1;
-            float cylSpecMargin = 0.1f;
-            float cylMass = 1;
-            var cylShape = new Cylinder(cylRadius, cylLength);
-            cylShape.ComputeInertia(cylMass, out var cylInertia);
-            var cylIndex = Simulation.Shapes.Add(cylShape);
-
-            const int pyramidCount = 1;
-            const int rowCount = 15;
-            var cylinders = new List<BodyHandle>();
-            for (int pyramidIndex = 0; pyramidIndex < pyramidCount; ++pyramidIndex)
-            {
-                for (int rowIndex = 0; rowIndex < rowCount; ++rowIndex)
-                {
-                    int columnCount = rowCount - rowIndex;
-                    for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
-                    {
-                        var h = Simulation.Bodies.Add(BodyDescription.CreateDynamic(new Vector3(
-                            (-columnCount * 0.5f + columnIndex) * 1,
-                            (rowIndex + 0.5f) * 1,
-                            (pyramidIndex - pyramidCount * 0.5f) * 6),
-                            cylInertia,
-                            new CollidableDescription(cylIndex, cylSpecMargin),
-                            new BodyActivityDescription(0.01f)));
-
-                        cylinders.Add(h);
-                        dynBodies.Add(h, sim.BufferPool);
-                    }
-                }
-            }
-
-            bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylMass, cylSpecMargin, cylinders));
+            dynBodies = new QuickList<BodyHandle>(1024, sim.BufferPool);
+            kinBodies = new QuickList<BodyHandle>(1024, sim.BufferPool);
+            Init(ref bodyDesc, ref dynBodies, ref kinBodies);
 
             EnsurePlayerSize(128);
             EnsureBodySize(sim.Simulation.Bodies.HandlePool.HighestPossiblyClaimedId + 1);
         }
+
+        protected abstract void Init(ref List<IBodyDesc> bodyDesc, ref QuickList<BodyHandle> dynBodies, ref QuickList<BodyHandle> kinBodies);
 
         void EnsurePlayerSize(int capacity)
         {
@@ -483,6 +132,11 @@ namespace cyServer
             foreach (var d in dynBodies)
             {
                 playerData.BodyPriorities.AddIndex(d.Value);
+            }
+
+            foreach (var k in kinBodies)
+            {
+                playerData.BodyPriorities.AddIndex(k.Value);
             }
 
             foreach (var pID in sim.PlayerIDs)
@@ -531,7 +185,7 @@ namespace cyServer
             }
         }
 
-        public override void OnConnect(NetConnection conn)
+        public void OnConnect(NetConnection conn)
         {
             var playerID = NewPlayer(out var startPos);
             conn.Tag = playerID;
@@ -558,7 +212,7 @@ namespace cyServer
             connections.Add(conn);
         }
 
-        public override void OnData(NetIncomingMessage msg)
+        public void OnData(NetIncomingMessage msg)
         {
             var playerID = msg.SenderConnection.Tag as int?;
             if (!playerID.HasValue)
@@ -599,7 +253,7 @@ namespace cyServer
             }
         }
 
-        public override void OnDisconnect(NetConnection conn)
+        public void OnDisconnect(NetConnection conn)
         {
             var playerID = conn.Tag as int?;
             if (!playerID.HasValue)
@@ -627,7 +281,7 @@ namespace cyServer
             }
         }
 
-        public override void Update(float dt)
+        public void Update(float dt)
         {
             SendUpdateMessages();
 
@@ -639,6 +293,7 @@ namespace cyServer
             //notes for further improvements for state updates:
             //ideas ordered based on expected payoff
             //massively shrink the player input size -- 1or2 byte for playerID, 1 byte for input, 2 bytes for yaw, for 4-5 bytes down from 15 -- can do 100 players and only take 1/3rd of the buffer
+            //on kinematic velocity change add a priority to it -- somewhere between 10 and 100 probably -- required if kinematic velocity changes exist
             //add priority per dyn body based on total impulse size per frame -- should capture the 'diverging' events better, could also direct-priority hammerhits
             //add priority based on distance -- just doing straight distancedsquared checks probably best, norbo says should be ezfast, can split distance updates over multipleframes
             foreach (var pID in sim.PlayerIDs)
@@ -694,10 +349,14 @@ namespace cyServer
             {
                 NetInterop.SerializePlayer(i, sim, msg);
             }
-            msg.Write((short)dynBodies.Count);
+            msg.Write((short)(dynBodies.Count + kinBodies.Count));
             for (int i = 0; i < dynBodies.Count; i++)
             {
                 NetInterop.SerializeBody(dynBodies[i], sim.Simulation, msg);
+            }
+            for (int i = 0; i < kinBodies.Count; i++)
+            {
+                NetInterop.SerializeBody(kinBodies[i], sim.Simulation, msg);
             }
         }
 

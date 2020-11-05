@@ -58,7 +58,7 @@ namespace cyServer
 
             config.Port = PORT; //local port
 
-            CurLevel = Level.LoadLevel(0, this);
+            CurLevel = new LevelOne(this);
 
             serv = new NetServer(config);
             serv.Start(); //this sleeps for 50ms >.>
@@ -182,7 +182,7 @@ namespace cyServer
                         break;
                     case NetIncomingMessageType.DebugMessage:
                     case NetIncomingMessageType.VerboseDebugMessage:
-                        Logger.WriteLine(LogType.DEBUG, "Lidgren debug message: " + msg.ReadString());
+                        Logger.WriteLine(LogType.VERBOSE, "Lidgren debug message: " + msg.ReadString());
                         break;
 
                     case NetIncomingMessageType.StatusChanged:

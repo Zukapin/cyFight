@@ -937,6 +937,47 @@ namespace cyFight
                         body = new CylinderThingy(radius, length, renderer, load_em, sim);
                     }
                     break;
+                case BodyType.CAPSULE:
+                    {
+                        var radius = msg.ReadFloat();
+                        var length = msg.ReadFloat();
+
+                        var cap = new Capsule(radius, length);
+                        if (!isStatic)
+                        {
+                            mass = msg.ReadFloat();
+                            cap.ComputeInertia(mass, out inertia);
+                        }
+                        specMargin = msg.ReadFloat();
+
+                        shapeIndex = sim.Simulation.Shapes.Add(cap);
+#if TEST_SIM
+                        var testIndex = sim.Test_Simulation.Shapes.Add(cap);
+                        Debug.Assert(shapeIndex.Packed == testIndex.Packed);
+#endif
+                        body = new CapsuleThingy(radius, length, renderer, load_em, sim);
+                    }
+                    break;
+                case BodyType.SPHERE:
+                    {
+                        var radius = msg.ReadFloat();
+
+                        var sph = new Sphere(radius);
+                        if (!isStatic)
+                        {
+                            mass = msg.ReadFloat();
+                            sph.ComputeInertia(mass, out inertia);
+                        }
+                        specMargin = msg.ReadFloat();
+
+                        shapeIndex = sim.Simulation.Shapes.Add(sph);
+#if TEST_SIM
+                        var testIndex = sim.Test_Simulation.Shapes.Add(sph);
+                        Debug.Assert(shapeIndex.Packed == testIndex.Packed);
+#endif
+                        body = new SphereThingy(radius, renderer, load_em, sim);
+                    }
+                    break;
                 default:
                     Logger.WriteLine(LogType.ERROR, "Unhandled body type " + type);
                     return;
@@ -1378,6 +1419,110 @@ namespace cyFight
                 else
                 {
                     cyl.DrawMRT();
+                }
+            }
+        }
+
+        class CapsuleThingy : IBodyRenderer
+        {
+            List<BodyHandle> bodyRefs;
+            Capsule_MRT cap;
+            CySim sim;
+
+            public CapsuleThingy(float radius, float length, Renderer renderer, EventManager em, CySim sim)
+            {
+                this.sim = sim;
+                cap = new Capsule_MRT(renderer, null, 0, VertexBuffer.CreatePosNormCapsule(renderer, radius, length));
+                cap.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
+                cap.scale = 1f;
+
+                em.addDrawMRT(0, DrawMRT);
+            }
+
+            public void SetPose(Vector3 pos, Quaternion ori)
+            {
+                cap.position = pos;
+                cap.rotation = Matrix3x3.CreateFromQuaternion(ori);
+            }
+
+            public void AddHandle(BodyHandle handle)
+            {
+                if (bodyRefs == null)
+                {
+                    bodyRefs = new List<BodyHandle>();
+                }
+                bodyRefs.Add(handle);
+            }
+
+            void DrawMRT()
+            {
+                if (bodyRefs != null)
+                {
+                    for (int i = 0; i < bodyRefs.Count; i++)
+                    {
+                        var bodyRef = new BodyReference(bodyRefs[i], sim.Simulation.Bodies);
+                        var pose = bodyRef.Pose;
+
+                        cap.position = pose.Position;
+                        cap.rotation = Matrix3x3.CreateFromQuaternion(pose.Orientation);
+                        cap.DrawMRT();
+                    }
+                }
+                else
+                {
+                    cap.DrawMRT();
+                }
+            }
+        }
+
+        class SphereThingy : IBodyRenderer
+        {
+            List<BodyHandle> bodyRefs;
+            Sphere_MRT sph;
+            CySim sim;
+
+            public SphereThingy(float radius, Renderer renderer, EventManager em, CySim sim)
+            {
+                this.sim = sim;
+                sph = new Sphere_MRT(renderer, null, 0);
+                sph.color = AcceptableColors[ColorRandomizer.Next(0, AcceptableColors.Length)];
+                sph.scale = new Vector3(radius);
+
+                em.addDrawMRT(0, DrawMRT);
+            }
+
+            public void SetPose(Vector3 pos, Quaternion ori)
+            {
+                sph.position = pos;
+                sph.rotation = Matrix3x3.CreateFromQuaternion(ori);
+            }
+
+            public void AddHandle(BodyHandle handle)
+            {
+                if (bodyRefs == null)
+                {
+                    bodyRefs = new List<BodyHandle>();
+                }
+                bodyRefs.Add(handle);
+            }
+
+            void DrawMRT()
+            {
+                if (bodyRefs != null)
+                {
+                    for (int i = 0; i < bodyRefs.Count; i++)
+                    {
+                        var bodyRef = new BodyReference(bodyRefs[i], sim.Simulation.Bodies);
+                        var pose = bodyRef.Pose;
+
+                        sph.position = pose.Position;
+                        sph.rotation = Matrix3x3.CreateFromQuaternion(pose.Orientation);
+                        sph.DrawMRT();
+                    }
+                }
+                else
+                {
+                    sph.DrawMRT();
                 }
             }
         }
