@@ -377,7 +377,7 @@ namespace cySim
                     {
                         ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[hammer.BodyHandle.Value];
                         ref var set = ref Simulation.Bodies.Sets[bodyLocation.SetIndex];
-                        ref var pose = ref set.Poses[bodyLocation.Index];
+                        ref var pose = ref set.SolverStates[bodyLocation.Index].Motion.Pose;
 
                         ref var targetCandidate = ref contactCollectionWorkerCaches[workerIndex].HammerCandidates[hammerIndex];
 
@@ -459,7 +459,7 @@ namespace cySim
                     //Have to take into account the current potentially inactive location.
                     ref var bodyLocation = ref Simulation.Bodies.HandleToLocation[character.BodyHandle.Value];
                     ref var set = ref Simulation.Bodies.Sets[bodyLocation.SetIndex];
-                    ref var pose = ref set.Poses[bodyLocation.Index];
+                    ref var pose = ref set.SolverStates[bodyLocation.Index].Motion.Pose;
                     QuaternionEx.Transform(character.LocalUp, pose.Orientation, out var up);
                     //Note that this branch is compiled out- the generic constraints force type specialization.
                     if (manifold.Convex)
@@ -774,16 +774,16 @@ namespace cySim
                     //If the character is jumping, don't create a constraint.
                     if (supportCandidate.Depth > float.MinValue && character.TryJump)
                     {
-                        QuaternionEx.Transform(character.LocalUp, Simulation.Bodies.ActiveSet.Poses[bodyLocation.Index].Orientation, out var characterUp);
+                        QuaternionEx.Transform(character.LocalUp, Simulation.Bodies.ActiveSet.SolverStates[bodyLocation.Index].Motion.Pose.Orientation, out var characterUp);
                         //Note that we assume that character orientations are constant. This isn't necessarily the case in all uses, but it's a decent approximation.
-                        var characterUpVelocity = Vector3.Dot(Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index].Linear, characterUp);
+                        var characterUpVelocity = Vector3.Dot(Simulation.Bodies.ActiveSet.SolverStates[bodyLocation.Index].Motion.Velocity.Linear, characterUp);
                         //We don't want the character to be able to 'superboost' by simply adding jump speed on top of horizontal motion.
                         //Instead, jumping targets a velocity change necessary to reach character.JumpVelocity along the up axis.
                         if (character.Support.Mobility != CollidableMobility.Static)
                         {
                             ref var supportingBodyLocation = ref Simulation.Bodies.HandleToLocation[character.Support.BodyHandle.Value];
                             Debug.Assert(supportingBodyLocation.SetIndex == 0, "If the character is active, any support should be too.");
-                            ref var supportVelocity = ref Simulation.Bodies.ActiveSet.Velocities[supportingBodyLocation.Index];
+                            ref var supportVelocity = ref Simulation.Bodies.ActiveSet.SolverStates[supportingBodyLocation.Index].Motion.Velocity;
                             var wxr = Vector3.Cross(supportVelocity.Angular, supportCandidate.OffsetFromSupport);
                             var supportContactVelocity = supportVelocity.Linear + wxr;
                             var supportUpVelocity = Vector3.Dot(supportContactVelocity, characterUp);
@@ -824,7 +824,7 @@ namespace cySim
                         Matrix3x3 surfaceBasis;
                         surfaceBasis.Y = supportCandidate.Normal;
                         //Note negation: we're using a right handed basis where -Z is forward, +Z is backward.
-                        QuaternionEx.Transform(character.LocalUp, Simulation.Bodies.ActiveSet.Poses[bodyLocation.Index].Orientation, out var up);
+                        QuaternionEx.Transform(character.LocalUp, Simulation.Bodies.ActiveSet.SolverStates[bodyLocation.Index].Motion.Pose.Orientation, out var up);
                         var rayDistance = Vector3.Dot(character.ViewDirection, surfaceBasis.Y);
                         var rayVelocity = Vector3.Dot(up, surfaceBasis.Y);
                         Debug.Assert(rayVelocity > 0,
@@ -858,7 +858,7 @@ namespace cySim
                             if (character.Supported && !shouldRemove)
                             {
                                 //Already exists, update it.
-                                Simulation.Solver.ApplyDescriptionWithoutWaking(character.MotionConstraintHandle, ref motionConstraint);
+                                Simulation.Solver.ApplyDescriptionWithoutWaking(character.MotionConstraintHandle, motionConstraint);
                             }
                             else
                             {
@@ -883,7 +883,7 @@ namespace cySim
                             if (character.Supported && !shouldRemove)
                             {
                                 //Already exists, update it.
-                                Simulation.Solver.ApplyDescriptionWithoutWaking(character.MotionConstraintHandle, ref motionConstraint);
+                                Simulation.Solver.ApplyDescriptionWithoutWaking(character.MotionConstraintHandle, motionConstraint);
                             }
                             else
                             {
@@ -963,8 +963,8 @@ namespace cySim
                         {//kinematics can still have velocities -- so we can figure out the blowback impulse fine, even if the target impulse doesn't do much
                             ref var targetBodyLocation = ref Simulation.Bodies.HandleToLocation[targetCandidate.Target.BodyHandle.Value];
 
-                            var targetVel = Simulation.Bodies.ActiveSet.Velocities[targetBodyLocation.Index];
-                            var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
+                            var targetVel = Simulation.Bodies.ActiveSet.SolverStates[targetBodyLocation.Index].Motion.Velocity;
+                            var hammerVel = Simulation.Bodies.ActiveSet.SolverStates[bodyLocation.Index].Motion.Velocity;
 
                             var wxr = Vector3.Cross(targetVel.Angular, targetCandidate.OffsetFromTarget);
                             var targetContactVelocity = targetVel.Linear + wxr;
@@ -990,7 +990,7 @@ namespace cySim
                         }
                         else //(targetCandidate.Target.Mobility == CollidableMobility.Static)
                         {
-                            var hammerVel = Simulation.Bodies.ActiveSet.Velocities[bodyLocation.Index];
+                            var hammerVel = Simulation.Bodies.ActiveSet.SolverStates[bodyLocation.Index].Motion.Velocity;
 
                             var wxr = Vector3.Cross(hammerVel.Angular, targetCandidate.OffsetFromHammer);
                             var hammerContactVelocity = hammerVel.Linear + wxr;
@@ -1158,23 +1158,23 @@ namespace cySim
                         ref var pendingConstraint = ref workerCache.StaticConstraintsToAdd[i];
                         ref var character = ref characters[pendingConstraint.CharacterIndex];
                         Debug.Assert(character.Support.Mobility == CollidableMobility.Static);
-                        character.MotionConstraintHandle = Simulation.Solver.Add(character.BodyHandle, ref pendingConstraint.Description);
+                        character.MotionConstraintHandle = Simulation.Solver.Add(character.BodyHandle, pendingConstraint.Description);
                     }
                     for (int i = 0; i < workerCache.DynamicConstraintsToAdd.Count; ++i)
                     {
                         ref var pendingConstraint = ref workerCache.DynamicConstraintsToAdd[i];
                         ref var character = ref characters[pendingConstraint.CharacterIndex];
                         Debug.Assert(character.Support.Mobility != CollidableMobility.Static);
-                        character.MotionConstraintHandle = Simulation.Solver.Add(character.BodyHandle, character.Support.BodyHandle, ref pendingConstraint.Description);
+                        character.MotionConstraintHandle = Simulation.Solver.Add(character.BodyHandle, character.Support.BodyHandle, pendingConstraint.Description);
                     }
                     ref var activeSet = ref Simulation.Bodies.ActiveSet;
                     for (int i = 0; i < workerCache.Jumps.Count; ++i)
                     {
                         ref var jump = ref workerCache.Jumps[i];
-                        activeSet.Velocities[jump.CharacterBodyIndex].Linear += jump.CharacterVelocityChange;
+                        activeSet.SolverStates[jump.CharacterBodyIndex].Motion.Velocity.Linear += jump.CharacterVelocityChange;
                         if (jump.SupportBodyIndex >= 0)
                         {
-                            BodyReference.ApplyImpulse(Simulation.Bodies.ActiveSet, jump.SupportBodyIndex, jump.CharacterVelocityChange / -activeSet.LocalInertias[jump.CharacterBodyIndex].InverseMass, jump.SupportImpulseOffset);
+                            BodyReference.ApplyImpulse(Simulation.Bodies.ActiveSet, jump.SupportBodyIndex, jump.CharacterVelocityChange / -activeSet.SolverStates[jump.CharacterBodyIndex].Inertia.Local.InverseMass, jump.SupportImpulseOffset);
                         }
                     }
                     workerCache.Dispose(pool);

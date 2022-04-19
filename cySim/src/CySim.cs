@@ -19,7 +19,7 @@ namespace cySim
         public BufferPool BufferPool { get; private set; }
         public Simulation Simulation { get; private set; }
         CharacterControllers characters;
-        SimpleThreadDispatcher ThreadDispatcher;
+        ThreadDispatcher ThreadDispatcher;
 
         int numPlayers;
         IdPool playerIDToPlayer;
@@ -55,14 +55,15 @@ namespace cySim
 
             characters = new CharacterControllers(BufferPool);
 
+            DefaultTimestepper asdf = new DefaultTimestepper();
             Simulation = Simulation.Create(
                 BufferPool,
                 new CyNarrowphaseCallbacks(characters),
                 new CyIntegratorCallbacks(new Vector3(0, -10, 0)),
-                new PositionFirstTimestepper());
+                new SolveDescription(8, 1));
 
             var targetThreadCount = Math.Max(1, Environment.ProcessorCount > 4 ? Environment.ProcessorCount - 2 : Environment.ProcessorCount - 1);
-            ThreadDispatcher = new SimpleThreadDispatcher(targetThreadCount);
+            ThreadDispatcher = new ThreadDispatcher(targetThreadCount);
 
             playerIDToPlayer = new IdPool(128, BufferPool);
             players = new CharacterInput[128];
@@ -75,7 +76,7 @@ namespace cySim
                 BufferPool,
                 new CyNarrowphaseCallbacks(Test_Characters),
                 new CyIntegratorCallbacks(new Vector3(0, -10, 0)),
-                new PositionFirstTimestepper());
+                new SolveDescription(8, 1));
 #endif
         }
 

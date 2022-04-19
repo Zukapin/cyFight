@@ -111,7 +111,7 @@ namespace cySim
             this.characters = characters;
             var shapeIndex = characters.Simulation.Shapes.Add(shape);
 
-            shape.ComputeInertia(mass, out var bodyInertia);
+            var bodyInertia = shape.ComputeInertia(mass);
             bodyHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(initialPosition, bodyInertia, new CollidableDescription(shapeIndex, speculativeMargin), new BodyActivityDescription(shape.Radius * 0.02f)));
             ref var character = ref characters.AllocateCharacter(bodyHandle);
             character.LocalUp = new Vector3(0, 1, 0);
@@ -130,7 +130,7 @@ namespace cySim
             input = default;
 
             var cylShape = new Cylinder(0.25f, 0.5f);
-            cylShape.ComputeInertia(0.25f, out var cylInertia);
+            var cylInertia = cylShape.ComputeInertia(0.25f);
             var cylIndex = characters.Simulation.Shapes.Add(cylShape);
             hamHandle = characters.Simulation.Bodies.Add(BodyDescription.CreateDynamic(
                 initialPosition + Constraints_POS_IDLE.LocalOffsetA,
@@ -262,7 +262,7 @@ namespace cySim
                 float toRot = (dir * deg - characterBody.Velocity.Angular.Y * 0.5f) / dt;
 
                 Constraints_CHAR_LOOKAT.TargetVelocity = new Vector3(0, toRot, 0);
-                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bodyLookAtHandle, ref Constraints_CHAR_LOOKAT);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bodyLookAtHandle, Constraints_CHAR_LOOKAT);
             }
 
             ref var hammer = ref characters.GetHammerByBodyHandle(hamHandle);
@@ -280,8 +280,8 @@ namespace cySim
             if (hammer.HammerState == HammerState.RECOIL)
             {
                 hammer.HammerState = HammerState.IDLE;
-                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_IDLE);
-                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, ref Constraints_ANGULAR);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, Constraints_POS_IDLE);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, Constraints_ANGULAR);
             }
             else if (hammer.HammerState == HammerState.SMASH)
             {
@@ -293,8 +293,8 @@ namespace cySim
 
                 Constraints_ANGULAR_SMASH.TargetRelativeRotationLocalA = rot * Constraints_ANGULAR.TargetRelativeRotationLocalA;
 
-                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, ref Constraints_POS_SMASH);
-                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, ref Constraints_ANGULAR_SMASH);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(bsHandle, Constraints_POS_SMASH);
+                characters.Simulation.Solver.ApplyDescriptionWithoutWaking(asHandle, Constraints_ANGULAR_SMASH);
             }
         }
 

@@ -17,11 +17,14 @@ namespace cySim
         public Vector3 Gravity;
         public float LinearDamping;
         public float AngularDamping;
-        Vector3 gravityDt;
-        float linearDampingDt;
-        float angularDampingDt;
+
+        Vector3Wide gravityWideDt;
+        Vector<float> linearDampingDt;
+        Vector<float> angularDampingDt;
 
         public AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
+        public readonly bool AllowSubstepsForUnconstrainedBodies => false;
+        public readonly bool IntegrateVelocityForKinematics => false;
 
         public CyIntegratorCallbacks(Vector3 gravity, float linearDamping = .03f, float angularDamping = .03f) : this()
         {
@@ -30,36 +33,31 @@ namespace cySim
             AngularDamping = angularDamping;
         }
 
+        public void Initialize(Simulation simulation)
+        {
+            //In this demo, we don't need to initialize anything.
+            //If you had a simulation with per body gravity stored in a CollidableProperty<T> or something similar, having the simulation provided in a callback can be helpful.
+        }
+
         public void PrepareForIntegration(float dt)
         {
             //No reason to recalculate gravity * dt for every body; just cache it ahead of time.
-            gravityDt = Gravity * dt;
-            //Since this doesn't use per-body damping, we can precalculate everything.
-            linearDampingDt = MathF.Pow(MathHelper.Clamp(1 - LinearDamping, 0, 1), dt);
-            angularDampingDt = MathF.Pow(MathHelper.Clamp(1 - AngularDamping, 0, 1), dt);
+            //Since these callbacks don't use per-body damping values, we can precalculate everything.
+            linearDampingDt = new Vector<float>(MathF.Pow(MathHelper.Clamp(1 - LinearDamping, 0, 1), dt));
+            angularDampingDt = new Vector<float>(MathF.Pow(MathHelper.Clamp(1 - AngularDamping, 0, 1), dt));
+            gravityWideDt = Vector3Wide.Broadcast(Gravity * dt);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void IntegrateVelocity(int bodyIndex, in RigidPose pose, in BodyInertia localInertia, int workerIndex, ref BodyVelocity velocity)
+        public void IntegrateVelocity(Vector<int> bodyIndices, Vector3Wide position, QuaternionWide orientation, BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex, Vector<float> dt, ref BodyVelocityWide velocity)
         {
-            //Note that we avoid accelerating kinematics. Kinematics are any body with an inverse mass of zero (so a mass of ~infinity). No force can move them.
-            if (localInertia.InverseMass > 0)
-            {
-                velocity.Linear = (velocity.Linear + gravityDt) * linearDampingDt;
-                velocity.Angular = velocity.Angular * angularDampingDt;
-            }
-            //Implementation sidenote: Why aren't kinematics all bundled together separately from dynamics to avoid this per-body condition?
-            //Because kinematics can have a velocity- that is what distinguishes them from a static object. The solver must read velocities of all bodies involved in a constraint.
-            //Under ideal conditions, those bodies will be near in memory to increase the chances of a cache hit. If kinematics are separately bundled, the the number of cache
-            //misses necessarily increases. Slowing down the solver in order to speed up the pose integrator is a really, really bad trade, especially when the benefit is a few ALU ops.
-
-            //Note that you CAN technically modify the pose in IntegrateVelocity by directly accessing it through the Simulation.Bodies.ActiveSet.Poses, it just requires a little care and isn't directly exposed.
-            //If the PositionFirstTimestepper is being used, then the pose integrator has already integrated the pose.
-            //If the PositionLastTimestepper or SubsteppingTimestepper are in use, the pose has not yet been integrated.
-            //If your pose modification depends on the order of integration, you'll want to take this into account.
-
-            //This is also a handy spot to implement things like position dependent gravity or per-body damping.
+            //This is a handy spot to implement things like position dependent gravity or per-body damping.
+            //This implementation uses a single damping value for all bodies that allows it to be precomputed.
+            //We don't have to check for kinematics; IntegrateVelocityForKinematics returns false, so we'll never see them in this callback.
+            //Note that these are SIMD operations and "Wide" types. There are Vector<float>.Count lanes of execution being evaluated simultaneously.
+            //The types are laid out in array-of-structures-of-arrays (AOSOA) format. That's because this function is frequently called from vectorized contexts within the solver.
+            //Transforming to "array of structures" (AOS) format for the callback and then back to AOSOA would involve a lot of overhead, so instead the callback works on the AOSOA representation directly.
+            velocity.Linear = (velocity.Linear + gravityWideDt) * linearDampingDt;
+            velocity.Angular = velocity.Angular * angularDampingDt;
         }
-
     }
 }

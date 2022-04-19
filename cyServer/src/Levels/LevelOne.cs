@@ -36,15 +36,15 @@ namespace cyServer
 
         protected override void Init(ref List<IBodyDesc> bodyDesc, ref QuickList<BodyHandle> dynBodies, ref QuickList<BodyHandle> kinBodies)
         {
-            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2500, 1, 2500), 0.1f, new Vector3(0, -0.5f, 0), Quaternion.Identity));
-            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2, 1, 2), 0.1f, new Vector3(0, 0.5f, 30), Quaternion.Identity));
+            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2500, 1, 2500), new Vector3(0, -0.5f, 0), Quaternion.Identity));
+            bodyDesc.Add(new BoxDesc(Simulation, new Vector3(2, 1, 2), new Vector3(0, 0.5f, 30), Quaternion.Identity));
 
             float cylRadius = 1;
             float cylLength = 1;
             float cylSpecMargin = 0.1f;
             float cylMass = 1;
             var cylShape = new Cylinder(cylRadius, cylLength);
-            cylShape.ComputeInertia(cylMass, out var cylInertia);
+            var cylInertia = cylShape.ComputeInertia(cylMass);
             var cylIndex = Simulation.Shapes.Add(cylShape);
 
             const int pyramidCount = 1;
@@ -71,7 +71,7 @@ namespace cyServer
                 }
             }
 
-            bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylMass, cylSpecMargin, cylinders));
+            bodyDesc.Add(new CylinderDesc(cylRadius, cylLength, cylMass, cylinders));
 
             var spinShape = Simulation.Shapes.Add(new Box(10, 0.5f, 1f));
             var spinHandle = Simulation.Bodies.Add(BodyDescription.CreateKinematic(
@@ -80,7 +80,7 @@ namespace cyServer
                 new CollidableDescription(spinShape, 0.1f),
                 new BodyActivityDescription(0.01f)));
             kinBodies.Add(spinHandle, sim.BufferPool);
-            bodyDesc.Add(new BoxDesc(new Vector3(10, 0.5f, 1f), 0f, 0.1f, spinHandle));
+            bodyDesc.Add(new BoxDesc(new Vector3(10, 0.5f, 1f), 0f, spinHandle));
         }
     }
 }

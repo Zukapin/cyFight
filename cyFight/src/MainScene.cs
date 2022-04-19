@@ -888,7 +888,6 @@ namespace cyFight
             }
 
             TypedIndex shapeIndex = default;
-            float specMargin = -1;
             IBodyRenderer body = null;
             float mass = -1;
             BodyInertia inertia = default;
@@ -904,9 +903,8 @@ namespace cyFight
                         if (!isStatic)
                         {
                             mass = msg.ReadFloat();
-                            box.ComputeInertia(mass, out inertia);
+                            inertia = box.ComputeInertia(mass);
                         }
-                        specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(box);
 #if TEST_SIM
@@ -925,9 +923,8 @@ namespace cyFight
                         if (!isStatic)
                         {
                             mass = msg.ReadFloat();
-                            cyl.ComputeInertia(mass, out inertia);
+                            inertia = cyl.ComputeInertia(mass);
                         }
-                        specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(cyl);
 #if TEST_SIM
@@ -946,9 +943,8 @@ namespace cyFight
                         if (!isStatic)
                         {
                             mass = msg.ReadFloat();
-                            cap.ComputeInertia(mass, out inertia);
+                            inertia = cap.ComputeInertia(mass);
                         }
-                        specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(cap);
 #if TEST_SIM
@@ -966,9 +962,8 @@ namespace cyFight
                         if (!isStatic)
                         {
                             mass = msg.ReadFloat();
-                            sph.ComputeInertia(mass, out inertia);
+                            inertia = sph.ComputeInertia(mass);
                         }
-                        specMargin = msg.ReadFloat();
 
                         shapeIndex = sim.Simulation.Shapes.Add(sph);
 #if TEST_SIM
@@ -1007,15 +1002,13 @@ namespace cyFight
                     sim.Simulation.Statics.Add(new StaticDescription(
                         pos,
                         ori,
-                        shapeIndex,
-                        specMargin));
+                        shapeIndex));
 
 #if TEST_SIM
                     sim.Test_Simulation.Statics.Add(new StaticDescription(
                         pos,
                         ori,
-                        shapeIndex,
-                        specMargin));
+                        shapeIndex));
 #endif
 
                     body.SetPose(pos, ori);
@@ -1034,7 +1027,7 @@ namespace cyFight
                         myHandle = sim.Simulation.Bodies.Add(BodyDescription.CreateKinematic(
                             bodyState.pose,
                             bodyState.velocity,
-                            new CollidableDescription(shapeIndex, specMargin),
+                            new CollidableDescription(shapeIndex),
                             new BodyActivityDescription(0.01f)));
                     }
                     else
@@ -1043,7 +1036,7 @@ namespace cyFight
                             bodyState.pose,
                             bodyState.velocity,
                             inertia,
-                            new CollidableDescription(shapeIndex, specMargin),
+                            new CollidableDescription(shapeIndex),
                             new BodyActivityDescription(0.01f)));
                     }
 
@@ -1054,7 +1047,7 @@ namespace cyFight
                         testHandle = sim.Test_Simulation.Bodies.Add(BodyDescription.CreateKinematic(
                             bodyState.pose,
                             bodyState.velocity,
-                            new CollidableDescription(shapeIndex, specMargin),
+                            new CollidableDescription(shapeIndex),
                             new BodyActivityDescription(0.01f)));
                     }
                     else
@@ -1063,7 +1056,7 @@ namespace cyFight
                             bodyState.pose,
                             bodyState.velocity,
                             inertia,
-                            new CollidableDescription(shapeIndex, specMargin),
+                            new CollidableDescription(shapeIndex),
                             new BodyActivityDescription(0.01f)));
                     }
                     Debug.Assert(myHandle.Value == testHandle.Value);

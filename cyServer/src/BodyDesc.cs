@@ -35,32 +35,30 @@ namespace cyServer
     {
         Vector3 shape;
         float mass;
-        float specMargin;
 
         bool IsStatic;
         int count;
         List<RigidPose> poses; //for static bodies
         List<BodyHandle> handles; //for non-static bodies
 
-        public BoxDesc(Simulation Simulation, Vector3 shape, float specMargin, Vector3 pos, Quaternion orientation)
+        public BoxDesc(Simulation Simulation, Vector3 shape, Vector3 pos, Quaternion orientation)
         {
             IsStatic = true;
             this.shape = shape;
-            this.specMargin = specMargin;
             poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
 
             count = 1;
             handles = default;
             mass = 0;
 
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z)), specMargin)));
+            var shapeIndex = Simulation.Shapes.Add(new Box(shape.X, shape.Y, shape.Z));
+            Simulation.Statics.Add(new StaticDescription(pos, orientation, shapeIndex));
         }
 
         public BoxDesc(Simulation Simulation, Vector3 shape, float specMargin, List<RigidPose> poses)
         {
             IsStatic = true;
             this.shape = shape;
-            this.specMargin = specMargin;
             this.poses = poses;
 
             count = poses.Count;
@@ -71,15 +69,14 @@ namespace cyServer
             for (int i = 0; i < count; i++)
             {
                 var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
+                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex));
             }
         }
 
-        public BoxDesc(Vector3 shape, float mass, float specMargin, BodyHandle handle)
+        public BoxDesc(Vector3 shape, float mass, BodyHandle handle)
         {
             IsStatic = false;
             this.shape = shape;
-            this.specMargin = specMargin;
             this.mass = mass;
             handles = new List<BodyHandle>() { handle };
             count = 1;
@@ -87,12 +84,11 @@ namespace cyServer
             poses = default;
         }
 
-        public BoxDesc(Vector3 shape, float mass, float specMargin, List<BodyHandle> handles)
+        public BoxDesc(Vector3 shape, float mass, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.shape = shape;
             this.mass = mass;
-            this.specMargin = specMargin;
             this.handles = handles;
 
             count = handles.Count;
@@ -110,7 +106,6 @@ namespace cyServer
                 msg.Write(shape.X);
                 msg.Write(shape.Y);
                 msg.Write(shape.Z);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -132,7 +127,6 @@ namespace cyServer
                 msg.Write(shape.Y);
                 msg.Write(shape.Z);
                 msg.Write(mass);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -148,7 +142,6 @@ namespace cyServer
     {
         float radius;
         float length;
-        float specMargin;
         float mass;
 
         bool IsStatic;
@@ -156,27 +149,26 @@ namespace cyServer
         List<RigidPose> poses;
         List<BodyHandle> handles;
 
-        public CylinderDesc(Simulation Simulation, float radius, float length, float specMargin, Vector3 pos, Quaternion orientation)
+        public CylinderDesc(Simulation Simulation, float radius, float length, Vector3 pos, Quaternion orientation)
         {
             IsStatic = true;
             this.radius = radius;
             this.length = length;
-            this.specMargin = specMargin;
             poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
 
             count = 1;
             handles = default;
             mass = 0;
 
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Cylinder(radius, length)), specMargin)));
+            var shapeIndex = Simulation.Shapes.Add(new Cylinder(radius, length));
+            Simulation.Statics.Add(new StaticDescription(pos, orientation, shapeIndex));
         }
 
-        public CylinderDesc(Simulation Simulation, float radius, float length, float specMargin, List<RigidPose> poses)
+        public CylinderDesc(Simulation Simulation, float radius, float length, List<RigidPose> poses)
         {
             IsStatic = true;
             this.radius = radius;
             this.length = length;
-            this.specMargin = specMargin;
             this.poses = poses;
 
             count = poses.Count;
@@ -187,29 +179,27 @@ namespace cyServer
             for (int i = 0; i < count; i++)
             {
                 var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
+                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex));
             }
         }
-        public CylinderDesc(float radius, float length, float mass, float specMargin, BodyHandle handle)
+        public CylinderDesc(float radius, float length, float mass, BodyHandle handle)
         {
             IsStatic = false;
             this.radius = radius;
             this.length = length;
             this.mass = mass;
-            this.specMargin = specMargin;
             handles = new List<BodyHandle>() { handle };
 
             count = 1;
             poses = default;
         }
 
-        public CylinderDesc(float radius, float length, float mass, float specMargin, List<BodyHandle> handles)
+        public CylinderDesc(float radius, float length, float mass, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.radius = radius;
             this.length = length;
             this.mass = mass;
-            this.specMargin = specMargin;
             this.handles = handles;
 
             count = handles.Count;
@@ -226,7 +216,6 @@ namespace cyServer
                 msg.Write((byte)(BodyType.STATIC | BodyType.CYLINDER));
                 msg.Write(radius);
                 msg.Write(length);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -247,7 +236,6 @@ namespace cyServer
                 msg.Write(radius);
                 msg.Write(length);
                 msg.Write(mass);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -263,7 +251,6 @@ namespace cyServer
     {
         float radius;
         float length;
-        float specMargin;
         float mass;
 
         bool IsStatic;
@@ -271,27 +258,26 @@ namespace cyServer
         List<RigidPose> poses;
         List<BodyHandle> handles;
 
-        public CapsuleDesc(Simulation Simulation, float radius, float length, float specMargin, Vector3 pos, Quaternion orientation)
+        public CapsuleDesc(Simulation Simulation, float radius, float length, Vector3 pos, Quaternion orientation)
         {
             IsStatic = true;
             this.radius = radius;
             this.length = length;
-            this.specMargin = specMargin;
             poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
 
             count = 1;
             handles = default;
             mass = 0;
 
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Capsule(radius, length)), specMargin)));
+            var shapeIndex = Simulation.Shapes.Add(new Capsule(radius, length));
+            Simulation.Statics.Add(new StaticDescription(pos, orientation, shapeIndex));
         }
 
-        public CapsuleDesc(Simulation Simulation, float radius, float length, float specMargin, List<RigidPose> poses)
+        public CapsuleDesc(Simulation Simulation, float radius, float length, List<RigidPose> poses)
         {
             IsStatic = true;
             this.radius = radius;
             this.length = length;
-            this.specMargin = specMargin;
             this.poses = poses;
 
             count = poses.Count;
@@ -302,29 +288,27 @@ namespace cyServer
             for (int i = 0; i < count; i++)
             {
                 var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
+                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex));
             }
         }
-        public CapsuleDesc(float radius, float length, float mass, float specMargin, BodyHandle handle)
+        public CapsuleDesc(float radius, float length, float mass, BodyHandle handle)
         {
             IsStatic = false;
             this.radius = radius;
             this.length = length;
             this.mass = mass;
-            this.specMargin = specMargin;
             handles = new List<BodyHandle>() { handle };
 
             count = 1;
             poses = default;
         }
 
-        public CapsuleDesc(float radius, float length, float mass, float specMargin, List<BodyHandle> handles)
+        public CapsuleDesc(float radius, float length, float mass, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.radius = radius;
             this.length = length;
             this.mass = mass;
-            this.specMargin = specMargin;
             this.handles = handles;
 
             count = handles.Count;
@@ -341,7 +325,6 @@ namespace cyServer
                 msg.Write((byte)(BodyType.STATIC | BodyType.CAPSULE));
                 msg.Write(radius);
                 msg.Write(length);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -362,7 +345,6 @@ namespace cyServer
                 msg.Write(radius);
                 msg.Write(length);
                 msg.Write(mass);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -377,7 +359,6 @@ namespace cyServer
     struct SphereDesc : IBodyDesc
     {
         float radius;
-        float specMargin;
         float mass;
 
         bool IsStatic;
@@ -385,25 +366,24 @@ namespace cyServer
         List<RigidPose> poses;
         List<BodyHandle> handles;
 
-        public SphereDesc(Simulation Simulation, float radius, float specMargin, Vector3 pos, Quaternion orientation)
+        public SphereDesc(Simulation Simulation, float radius, Vector3 pos, Quaternion orientation)
         {
             IsStatic = true;
             this.radius = radius;
-            this.specMargin = specMargin;
             poses = new List<RigidPose>() { new RigidPose(pos, orientation) };
 
             count = 1;
             handles = default;
             mass = 0;
 
-            Simulation.Statics.Add(new StaticDescription(pos, orientation, new CollidableDescription(Simulation.Shapes.Add(new Sphere(radius)), specMargin)));
+            var shapeIndex = Simulation.Shapes.Add(new Sphere(radius));
+            Simulation.Statics.Add(new StaticDescription(pos, orientation, shapeIndex));
         }
 
-        public SphereDesc(Simulation Simulation, float radius, float specMargin, List<RigidPose> poses)
+        public SphereDesc(Simulation Simulation, float radius, List<RigidPose> poses)
         {
             IsStatic = true;
             this.radius = radius;
-            this.specMargin = specMargin;
             this.poses = poses;
 
             count = poses.Count;
@@ -414,27 +394,25 @@ namespace cyServer
             for (int i = 0; i < count; i++)
             {
                 var pose = poses[i];
-                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex, specMargin));
+                Simulation.Statics.Add(new StaticDescription(pose.Position, pose.Orientation, shapeIndex));
             }
         }
-        public SphereDesc(float radius, float mass, float specMargin, BodyHandle handle)
+        public SphereDesc(float radius, float mass, BodyHandle handle)
         {
             IsStatic = false;
             this.radius = radius;
             this.mass = mass;
-            this.specMargin = specMargin;
             handles = new List<BodyHandle>() { handle };
 
             count = 1;
             poses = default;
         }
 
-        public SphereDesc(float radius, float mass, float specMargin, List<BodyHandle> handles)
+        public SphereDesc(float radius, float mass, List<BodyHandle> handles)
         {
             IsStatic = false;
             this.radius = radius;
             this.mass = mass;
-            this.specMargin = specMargin;
             this.handles = handles;
 
             count = handles.Count;
@@ -450,7 +428,6 @@ namespace cyServer
             {
                 msg.Write((byte)(BodyType.STATIC | BodyType.SPHERE));
                 msg.Write(radius);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
@@ -470,7 +447,6 @@ namespace cyServer
                 msg.Write((byte)BodyType.SPHERE);
                 msg.Write(radius);
                 msg.Write(mass);
-                msg.Write(specMargin);
                 if (count > 1)
                     msg.Write(count);
                 for (int i = 0; i < count; i++)
